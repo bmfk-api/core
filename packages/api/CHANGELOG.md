@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1 — 2026-11-23
+
+### Release process
+
+- Published from CI through an npm Trusted Publisher (OIDC): no npm token exists anywhere. The release
+  workflow checks that npm supports it (11.5.1+) and waits for approval on the `npm` environment.
+
 ## 1.0.0 — 2026-11-23
 
 First release of `@bmfk/api`: a TypeScript framework for HTTP API services on Node.js, built so that a
