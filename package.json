@@ -1,5 +1,6 @@
 {
   "name": "bmfk",
+  "version": "0.0.0",
   "private": true,
   "description": "bmfk \u2014 Backend Modular Framework Kit (monorepo)",
   "workspaces": [

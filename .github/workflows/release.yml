@@ -31,13 +31,16 @@ jobs:
           test -s notes.md || { echo "No '## $BASE' section in packages/api/CHANGELOG.md"; exit 1; }
       - run: npm run build            # the monitor UI shipped inside the package is built here, from source
       - run: npm test -w @bmfk/api
+      - name: SBOM (runtime dependencies), before publishing so a failure stops the release
+        run: |
+          npm sbom -w @bmfk/api --omit dev --sbom-format cyclonedx > sbom.cdx.json
+          node .github/scripts/sbom-subject.cjs sbom.cdx.json
       - name: Publish
         run: |
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then TAG=next; else TAG=latest; fi
           npm publish -w @bmfk/api --provenance --access public --tag "$TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm sbom -w @bmfk/api --sbom-format cyclonedx > sbom.cdx.json
       - run: gh release create "$GITHUB_REF_NAME" sbom.cdx.json --title "$GITHUB_REF_NAME" --notes-file notes.md $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
         env:
           GH_TOKEN: ${{ github.token }}
