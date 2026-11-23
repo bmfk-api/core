@@ -1,6 +1,6 @@
 {
   "name": "@bmfk/api",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "TypeScript framework for HTTP API services: validated endpoints, signed microservice calls, a 2FA operations console and a deployer with blue-green releases",
   "license": "MIT",
   "author": "Igor Bloom",
