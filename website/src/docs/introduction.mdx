@@ -1,0 +1,56 @@
+`{{pkg}}` is a TypeScript framework for HTTP API services on Node.js. Beyond routing and validation, it ships
+the parts every production service needs and usually gets from separate tools: an operations console, a
+deployer with blue-green releases and backups, deploy review, signed service-to-service calls and log
+redaction for payment data.
+
+```bash
+npm install {{pkg}}
+```
+
+Node.js 24 or later is required (the supported LTS lines).
+
+## What’s inside
+
+<Cards>
+  <Card title="Endpoints and validation" href="/docs/endpoints">Endpoint classes, validation models that double as TypeScript types, generated API documentation.</Card>
+  <Card title="Monitor console" href="/docs/monitor">Metrics, logs, outgoing latency and threats in a web console behind mandatory 2FA.</Card>
+  <Card title="Deployer" href="/docs/deployer">Ed25519-signed uploads, secrets outside the code, `npm ci` with scripts disabled.</Card>
+  <Card title="Blue-green and review" href="/docs/blue-green">Two slots behind nginx, rollbacks in seconds, four-eyes approval with a diff.</Card>
+  <Card title="Microservice calls" href="/docs/microservices">Per-caller keys, signed answers, operations that run once across retries.</Card>
+  <Card title="Logging and redaction" href="/docs/logging">Card numbers, CVV and secrets masked whenever a log is written.</Card>
+</Cards>
+
+## How the parts fit together
+
+One `APIService` runs your endpoints and the built-in routes on the same port. The deployer is the same
+framework running on the target server with the `deployer` option, so there is no separate agent to install.
+
+| Route | Purpose | Who uses it |
+|---|---|---|
+| your endpoints | your API | your clients, through your [interceptor](/docs/interceptors) |
+| `liveness`, `readiness` | health checks | load balancers and orchestrators |
+| `doc/*` | [API documentation](/docs/api-documentation) | developers and partners |
+| `sm/*` | [monitor console](/docs/monitor) | your operations team, with 2FA |
+| `pckg/*` | [deployer](/docs/deployer), if configured | CI and developers, with signed requests |
+| `review/*` | [deploy review](/docs/deploy-review), if configured | reviewers, with 2FA |
+
+The built-in routes are always hidden from the API documentation.
+
+## Design principles
+
+- **Secure defaults, explicit configuration.** Passwords are stored only as scrypt hashes, 2FA can’t be
+  turned off for the monitor, and request signing uses key pairs so the server holds nothing worth stealing.
+- **One envelope.** Every response has the same shape, success or error:
+
+  ```jsonc
+  { "data": { … }, "responseTime": 4, "endpoint": "/api/v1/users/get", "version": "1.2.0", "traceId": "…" }
+  { "error": { "code": 401, "message": "Unauthorized", "httpStatus": 401, "details": "…" } }
+  ```
+
+- **Stated limits.** The [security model](/docs/security) lists what the framework doesn’t do as clearly
+  as what it does.
+
+<Callout kind="security" title="Using it in a PCI DSS environment">
+The framework helps with specific requirements — MFA, lockout, session limits, redaction, change control —
+but compliance is assessed for your whole environment. See the [PCI DSS mapping](/docs/pci-dss).
+</Callout>

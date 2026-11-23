@@ -1,0 +1,216 @@
+The deployer is an `APIService` running on the target server with the `deployer` option. It receives a build,
+checks it, unpacks it, installs dependencies, writes the configuration and starts the process in pm2. There is
+no third-party CI agent: the server accepts only what is signed for it.
+
+## On the server
+
+The quickest start is the wizard — in an empty folder, as the user that will own the deployed projects
+(not root):
+
+```bash
+npm init -y && npm i {{pkg}}
+npx {{cli}} deployer-init
+```
+
+It checks Node, pm2 and `/var/bmfk`, asks for the port, the folders, the first deploy users' public keys
+(`npx {{cli}} deploy-key` prints them on the machine you deploy from), the addresses allowed to deploy and an
+optional Telegram chat. It writes `bin/Main.js`, `ecosystem.config.cjs` for pm2 and `setup.json`
+(mode `600`), and prints the nginx block (with `client_max_body_size` matching the archive limit) and the
+next commands. It asks before replacing anything. What it writes is an ordinary service:
+
+```ts
+getDefaultOptions({
+  port: 9915,
+  fileLimit: 100 * 1024 * 1024,                   // the largest deploy archive
+  deployer: {
+    projects_path: "/var/bmfk/bmfk-deployer/projects",   // one JSON config per project
+    setup_path: "/var/bmfk/bmfk-deployer/setup",         // the folder that holds setup.json
+  },
+});
+```
+
+### Who may deploy: setup.json
+
+The recommended way is a **signing key per user**. `npx {{cli}} deploy-key`, run in the project, writes an
+Ed25519 private key into `deploy.json` and prints the public key for `setup.json`.
+
+```jsonc
+{
+  "users": [
+    { "login": "ci", "publicKey": "MCowBQYDK2VwAyEA…" },          // signs its requests
+    { "login": "igor", "password": "scrypt$16384$8$1$…" }          // password: only with require_signature false
+  ],
+  "require_signature": false,                                       // omit it (default): signed requests only
+  "allowed_ips": ["203.0.113.7", "10.8.0.0/24"]
+}
+```
+
+- **Signed requests.** A captured request can’t be replayed or changed, the signature covers the archive’s
+  sha256, and the deployer stores no secret at all.
+- **Signed requests only, by default.** `require_signature: false` also lets password users in, while they get keys.
+- **`allowed_ips`** is checked before the credentials for every deployer call. Other addresses get `403`.
+- **Reloaded on change.** An invalid entry rejects the whole change, and the previous setup stays in force.
+- **Failures are explained in the server log**, while the client only gets `Unauthorized`.
+
+### Telegram notifications
+
+With `telegram` in `setup.json` the deployer posts one message per event to a chat: deploy
+done, a failed step (backup, unpack, migrate, pm2, nginx, liveness), switch and rollback, restore, a deploy
+waiting for review and the review's outcome, readiness lost and back. The message names the project, the
+status, the user and the server — never a review link (those are personal) and never config values.
+
+```jsonc
+"telegram": { "bot": "<token from @BotFather>", "chat": "-100…", "topic": 12 }   // topic: optional, a forum topic
+```
+
+The bot must be a member of the chat. The token is a secret: keep `setup.json` at `600`, and if the token
+leaks, revoke it in @BotFather. It is sent only to `api.telegram.org` and never written to logs or the
+monitor's journal. Changes apply without a restart; a failed send is logged and never stops a deploy.
+
+`npx {{cli}} setup-config <folder>` edits users, reviewers and allowed addresses from a menu and hashes
+passwords for you.
+
+<Callout kind="warn" title="Behind nginx">
+Pass the real client address: `proxy_set_header X-Real-IP $remote_addr;`. Never add `127.0.0.1` to
+`allowed_ips` on a deployer behind a proxy on the same host: that would let every request through.
+</Callout>
+
+### A project config
+
+`npx {{cli}} project-config` asks for everything, generates the token, takes config values as hidden input,
+checks the result against the deployer’s schema and saves both the project config and a matching
+`deploy.json` with permissions `600`.
+
+```jsonc
+{
+  "name": "my-service",
+  "destination": "/var/node/my-service",
+  "token": "scrypt$16384$8$1$…",   // hash of the project token: npx {{cli}} project-token
+  "unpack": true, "install": true, "pm2": true,
+  "backup": true,     // copy the current version aside before each deploy
+  "migrate": false,   // run `npm run migrate` before the process starts
+  "omitDev": false,   // true: install without devDependencies (npm ci --omit=dev)
+  "config": { "DB_HOST": "…" }   // substituted into the shipped placeholders _{{DB_HOST}}_
+}
+```
+
+The `name` becomes the deployed `package.json` name, the data folder `/var/bmfk/<name>` and part of the
+state, backup and secrets file names. So it is restricted: lowercase letters, digits, `.`, `_` and `-`,
+starting with a letter or digit, up to 100 characters — for example `api.gateway.example.com`. A
+project config with any other name is ignored, with an error in the deployer's log;
+`{{cli}} migrate-configs` lists such configs too.
+
+## Keeping secrets out of the deployed code
+
+By default, `config` values are written into the shipped files in place of `_{{KEY}}_`. That puts passwords
+into the code, into both blue-green slots and into every backup. Add `secrets` to the project config instead:
+
+```jsonc
+"secrets": {}                                   // "secrets_dir" from setup.json, else /var/bmfk/<project>/secrets[-<slot>].json
+"secrets": { "dir": "/etc/node-secrets" }       // → /etc/node-secrets/<project>[-<slot>].json
+"secrets": { "file": "/etc/node-secrets/my.json" }
+```
+
+The deployer writes the values into that file, with permissions `600` and outside the deploy folder, and
+rewrites each quoted placeholder in `.js` files as a read of the file:
+
+```js
+DB_PASSWORD: "_{{db_password}}_"            // in the archive
+DB_PASSWORD: (function(k){ … reads /etc/node-secrets/my-blue.json … })("db_password")   // on the server
+```
+
+- **No code changes.** The application gets exactly the strings it got before.
+- **Backups and archives** contain only the file path; a restored version reads the current values.
+- **A missing key** fails the start with a clear error instead of running with a placeholder.
+- **Same user.** The file is readable only by the deployer’s user, which pm2 runs the app as. A project that
+  switches the pm2 user is refused before anything changes.
+- **Fallback.** Values are still written into `.json`, `.env`, unquoted placeholders, templates and ES-module
+  files. Each deploy logs which files still hold values.
+
+## In your project
+
+Create `deploy.json`, or a `deploy/` folder with one config per target. Keep it out of git.
+
+```jsonc
+{
+  "name": "my-service",
+  "host": "https://deployer.example.com/api/pckg/add",
+  "token": "<project token, printed by npx {{cli}} project-token>",
+  "username": "ci",
+  "privateKey": "<from npx {{cli}} deploy-key>",
+  "includes": ["certs", { "src": "assets/logo.png", "dest": "bin/logo.png" }],
+  "excludes": ["*.map"],
+  "bundle": true,
+  "versionBump": false     // optional: keep package.json "version" (default: patch + 1 on every deploy)
+}
+```
+
+```json
+"scripts": {
+  "deploy":   "{{cli}} deploy",
+  "activate": "{{cli}} activate",
+  "status":   "{{cli}} status",
+  "backups":  "{{cli}} backups",
+  "restore":  "{{cli}} restore"
+}
+```
+
+`npm run deploy` shows each step with its duration — config switch, version bump, build, bundle, archive,
+upload — and the build’s full output if it fails.
+
+### Bundling
+
+`"bundle": true` ships the app’s own code as one file instead of the tsc tree in `./bin`. esbuild bundles
+`src/` into the file `"main"` points to; every package stays a plain `require()`, and the server still runs
+`npm ci`. Everything else in `./bin` ships as it is, so paths stay the same.
+
+The bundler runs on your machine only, so it is an optional dependency:
+
+```bash
+npm i -D esbuild @babel/parser
+```
+
+- **Entry.** Derived from `"main"`: `bin/Main.js` → `src/Main.ts`. Override with `"bundle": { "entry": "src/Main.ts" }`.
+- **Source maps.** `bin/Main.js.map` ships alongside (line mappings, no source), and the deployer starts the
+  process with `--enable-source-maps`, so stack traces point at `src/` lines. `"sourcemap": false` turns it off.
+- **Minify.** `"bundle": { "minify": true }` makes the shipped file hard to read at no runtime cost.
+- **Warnings, not failures,** for code that behaves differently in one file: `__dirname` outside the entry,
+  values exported by the entry read while modules load, and leftover `.js` files in `./bin`.
+
+<Callout kind="security" title="Minification is not secret protection">
+String literals — so any value baked into the code — stay in clear text. Keep credentials in a
+[secrets file](#keeping-secrets-out-of-the-deployed-code), and protect files with `"chmod": 700` and a
+dedicated OS user.
+</Callout>
+
+## CLI
+
+| Command | What it does |
+|---|---|
+| `{{cli}} wizards` | list every interactive wizard and run one |
+| `{{cli}} deployer-init [folder]` | set up a deployer on this server: service, pm2 file, `setup.json`, nginx block |
+| `{{cli}} deploy [config]` | build and upload the project |
+| `{{cli}} activate [config] [blue\|green]` | switch traffic to a slot |
+| `{{cli}} status [config]` | active and last deployed slot, recent history |
+| `{{cli}} backups [config]` | list backups |
+| `{{cli}} restore [config] [backup] [--yes]` | restore a backup |
+| `{{cli}} hash-password [--deployer]` | hash a password for the monitor or `setup.json` |
+| `{{cli}} project-token [--hash]` | a project token and its hash, or hash an existing one |
+| `{{cli}} project-config` | build a project config step by step, plus a `deploy.json` |
+| `{{cli}} access-config [file]` | create or edit `access.json` |
+| `{{cli}} migrate-configs [folder] [--yes]` | hash plain-text secrets in existing config files, in place |
+| `{{cli}} setup-config [file\|folder]` | edit `setup.json`: users, keys, reviewers, allowed IPs |
+| `{{cli}} deploy-key [deploy.json]` | a deploy signing key: private into `deploy.json`, public for `setup.json` |
+| `{{cli}} ms-key` | a signing key pair for [microservice calls](/docs/microservices) |
+
+To pass a config path through npm, use `--`: `npm run deploy -- deploy/prod.json`.
+
+## Safety of the pipeline
+
+- **Archives are checked before unpacking:** absolute paths, `..` and symlinks pointing outside the destination are rejected.
+- **Unsafe destinations are refused:** relative paths, `/`, top-level system folders, the deployer’s own
+  folders, and a folder whose wipe would delete another project.
+- **No install scripts.** Dependencies are installed with `npm ci --ignore-scripts`; `migrate` is the only script the deployer runs. With `"omitDev": true` in the project config, devDependencies are not installed on the server at all — check first that `npm start` and `npm run migrate` need nothing from them.
+- **Two credentials.** Every deploy, switch and restore needs a deployer user and the project token, both
+  stored on the server only as hashes or public keys.
+- **Optional approval.** With [deploy review](/docs/deploy-review), uploads wait for reviewers who sign in with a password and 2FA.

@@ -1,0 +1,114 @@
+One service, the **host**, exposes `Req` handlers. Other services, the **callers**, call them by name. Every
+service has its own Ed25519 key pair, and there is no shared secret: the caller signs each request, the host
+signs each answer, and each side holds only the other’s public key.
+
+## Keys
+
+```bash
+npx {{cli}} ms-key
+```
+
+prints a new pair. Make one for the host and one for every caller.
+
+| Key | Goes to |
+|---|---|
+| host private key | the host’s `privateKey` (a secret) |
+| host public key | every caller’s `hostPublicKey` |
+| caller private key | that caller’s `privateKey` (a secret) |
+| caller public key | the host’s `clients`, under the caller’s key id |
+
+Keep private keys in a [secrets file](/docs/deployer#keeping-secrets-out-of-the-deployed-code), not in the code.
+
+## Host
+
+```ts
+import { MicroserviceHost } from "{{pkg}}";
+
+new MicroserviceHost({
+  id: "crm",
+  requests: [REQ_FEES_ACTUAL, REQ_MERCHANT_ACTUAL],
+  privateKey: secrets.CRM_MS_KEY,                    // signs the answers
+  clients: {
+    shop:    { publicKey: "MCowBQYDK2VwAyEA…", allowedIps: ["127.0.0.1", "::1"] },  // everything, from this server only
+    reports: { publicKey: "MCowBQYDK2VwAyEA…", requests: ["REQ_FEES_ACTUAL"], allowedIps: ["10.8.0.0/24"] },
+  },
+});
+```
+
+## Caller
+
+```ts
+import { MicroserviceClient, REQ_MICROSERVICE_CALL } from "{{pkg}}";
+
+new MicroserviceClient({
+  id: "crm",
+  host: "https://crm.example.com/api",               // https; plain http only to localhost
+  kid: "shop",                                       // this caller's name in the host's `clients`
+  privateKey: secrets.GATE_MS_KEY,
+  hostPublicKey: "MCowBQYDK2VwAyEA…",                // every answer is checked against it
+});
+
+const fees = await REQ_MICROSERVICE_CALL.request({
+  id: "crm",
+  requestName: "REQ_FEES_ACTUAL",
+  requestData: { mid },
+});
+```
+
+## What the protocol guarantees
+
+- **Who may call what.** The host knows each caller by its key id and refuses requests outside that caller’s
+  `requests` list with `FORBIDDEN`.
+- **From where.** `allowedIps` (IPs and subnets, IPv4/IPv6) limits where a caller’s key works, so a leaked key
+  is useless anywhere else. A call from another address gets `403` before its signature is checked, and the host
+  logs the key id and address. Behind nginx the address is `X-Real-IP` (`proxy_set_header X-Real-IP
+  $remote_addr;`), believed only from `trustedProxies` (loopback by default); otherwise the TCP peer. For a
+  caller on the same server list both `127.0.0.1` and `::1`. Without `allowedIps` any address is accepted; a
+  malformed or empty list stops the host.
+- **Integrity both ways.** A request can’t be replayed, changed on the way or redirected to another host. An
+  answer not signed by the expected host is rejected by the caller.
+- **Results stay with the caller.** Finished operations are stored per caller, so one caller can’t read
+  another’s results.
+- **Errors don’t leak.** A handler’s `IError` goes back without its `stack`. An unexpected exception is logged
+  on the host, and the caller gets a bare `INTERNAL_ERROR`.
+
+## Operations run once
+
+Each call carries an operation id, `op`, that stays the same across retries. The host runs an operation
+once and answers repeats from its job store, including a repeat that arrives while the first is still running.
+
+Pass your own `op` — a payment or transfer id — to make it stable beyond the caller’s process:
+
+```ts
+await REQ_MICROSERVICE_CALL.request({
+  id: "ledger",
+  requestName: "REQ_POST_ENTRY",
+  requestData: { paymentId, amount },
+  op: `payment-${paymentId}`,
+});
+```
+
+An `op` reused for a different request is refused with `CONFLICT`.
+
+<Callout kind="security" title="Handlers that move money">
+The default job store is the host’s memory, so a restart — a deploy — forgets it. A handler with a financial
+effect must also record `op` in its own database, in the same transaction as the effect. Only that makes the
+operation run once even if the process dies between the effect and the answer.
+</Callout>
+
+```ts
+REQ_POST_ENTRY.listener = async ({ paymentId, amount }) => {
+  const call = MicroserviceHost.currentCall();      // { caller, op, requestName }
+  return db.transaction(async tx => {
+    await tx.insert("processed_ops", { op: call!.op, caller: call!.caller });   // unique index on (caller, op)
+    return tx.insert("ledger", { paymentId, amount });
+  });
+};
+```
+
+A custom store can be passed as `jobStore`; it implements `get`, `set` and `purge`.
+
+## Transport
+
+Signatures prove who sent what; they don’t hide it. Confidentiality is TLS, and the caller refuses plain
+`http` to anything but `localhost`.

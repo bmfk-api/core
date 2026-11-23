@@ -1,0 +1,98 @@
+Releases without downtime, and rollbacks in seconds.
+
+## The idea
+
+A project has **two slots**, `blue` and `green`. Each slot is its own folder and its own pm2 process on its own
+port. nginx sends traffic to one slot at a time.
+
+```text
+                ┌──────────── nginx ────────────┐
+   clients ───▶ │  upstream → active slot port  │
+                └───────┬───────────────┬───────┘
+                        ▼               ┆ (no traffic)
+               my-service-blue    my-service-green
+                 :8055 (live)       :8056 (standby)
+```
+
+1. **`deploy`** puts the new version into the **inactive** slot and starts it. Production isn’t touched, and you
+   can test the new slot directly on its port.
+2. **`activate`** points nginx at that slot and reloads nginx. The switch is instant.
+3. **Rollback** is `activate` back to the other slot. The previous version is still running.
+
+The first deploy creates `blue` and makes it active right away.
+
+## Configuring a project
+
+Add `bluegreen` and `nginx` to the project config on the deployer:
+
+```jsonc
+{
+  "name": "my-service",
+  "destination": "/var/node/my-service",      // slots go to …/blue and …/green
+  "token": "scrypt$…", "unpack": true, "install": true, "pm2": true, "backup": true,
+  "config": { "DB_HOST": "…" },               // shared by both slots
+
+  "bluegreen": {
+    "blue_config":  { "port": "8055" },        // per-slot values; the ports must differ
+    "green_config": { "port": "8056" },
+    "on_switch": ["/usr/sbin/nginx", "-s", "reload"]
+  },
+
+  "nginx": {
+    "config_dir": "/etc/nginx/node-projects",  // nginx must include <config_dir>/*.conf
+    "domain": "api.example.com"
+  }
+}
+```
+
+The deployer manages two nginx files per project:
+
+- **`<name>.upstream.conf`** holds only the active port, rewritten on every switch.
+- **`<name>.server.conf`** is the server block. It is created once and then belongs to you — add TLS with
+  `certbot --nginx -d <domain>`, extra locations and so on. It already passes `X-Real-IP` and WebSocket upgrade headers.
+
+## Workflow
+
+```bash
+npm run deploy                 # new version → inactive slot, production unchanged
+npm run status                 # "green is deployed but NOT switched"
+npm run activate               # traffic → green
+npx {{cli}} activate blue      # rollback → blue
+```
+
+## Is my process live?
+
+Both slots run at the same time. Work that must happen once — cron jobs, queue consumers, mailings — should run
+**only in the live slot**:
+
+```ts
+APIService.onLiveChange(live => {
+  if (live) startCrons();
+  else      stopCrons();      // this slot was switched to standby
+});
+
+if (APIService.isLive) { /* … */ }   // true / false / null (not known yet)
+```
+
+| Situation | `live` |
+|---|---|
+| Project not on blue-green | `true`, always |
+| My slot is active | `true` |
+| My slot is standby | `false` |
+| Not known yet | `null`; the callback waits for an answer |
+
+Each slot gets a `.bluegreen.json` (mode `600`) with a **read-only status token**. The app asks the deployer
+over loopback every `blueGreenWatchMs` (5 s) which slot is active. If the deployer is unreachable, the last
+known value is kept; an error never switches the app to standby. Deploy credentials never reach the application.
+
+## Two things to keep in mind
+
+<Callout kind="warn" title="The database is shared by both slots">
+The new version starts before the switch, and after a rollback the old version works with the database again.
+Schema migrations must be backward-compatible: add first, remove in a later release. Neither `activate` nor
+`restore` rolls back the schema.
+</Callout>
+
+**Moving an existing project to blue-green.** Use ports different from the current one. After the first
+blue-green deploy, stop the old process (`pm2 delete <name>`, then `pm2 save`): it has no `.bluegreen.json`, so
+it would consider itself live, and singleton work would run twice.

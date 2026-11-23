@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build-test/
+coverage/
+*.tgz
+.DS_Store
+# deploy credentials must never be committed
+deploy.json
+deploy/
+# built from packages/monitor and packages/api-docs by `npm run build` (CI builds them from source)
+packages/api/src/apiServer/monitor/index.html
+packages/api/src/apiServer/documentation/index.html
+# sandbox state: 2FA enrollments, metrics, threats
+examples/sandbox/.data/

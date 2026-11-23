@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{title}}</title>
+<style>
+:root {
+  --bg: #f5f6f8; --card: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --line: #dfe3e8;
+  --accent: #2457d6; --ok: #1d7a46; --ok-bg: #e6f4ec; --bad: #b42318; --bad-bg: #fdecea;
+  --warn: #8a5a00; --warn-bg: #fff4dc; --code: #f0f2f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --card: #1a1f25; --text: #e6e9ed; --muted: #9aa5b1; --line: #2c333b;
+    --accent: #6d95ff; --ok: #5cc98b; --ok-bg: #16301f; --bad: #ff8a80; --bad-bg: #3a1d1b;
+    --warn: #ffcc66; --warn-bg: #3a2e12; --code: #232a32;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 24px 0 8px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.sub { color: var(--muted); margin: 0 0 24px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+.card + .card { margin-top: 16px; }
+label { display: block; font-weight: 600; margin: 14px 0 6px; }
+input { width: 100%; padding: 10px 12px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hint { color: var(--muted); font-size: 13px; margin-top: 4px; }
+button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 8px; border: 1px solid transparent; cursor: pointer; }
+button:disabled { opacity: .55; cursor: default; }
+.primary { background: var(--accent); color: #fff; }
+.accept { background: var(--ok); color: #fff; }
+.decline { background: transparent; color: var(--bad); border-color: var(--bad); }
+.row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+.msg { margin-top: 14px; padding: 10px 12px; border-radius: 8px; display: none; }
+.msg.show { display: block; }
+.msg.err { background: var(--bad-bg); color: var(--bad); }
+.msg.ok { background: var(--ok-bg); color: var(--ok); }
+.msg.warn { background: var(--warn-bg); color: var(--warn); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; overflow-wrap: anywhere; }
+code { background: var(--code); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+.qr { width: 220px; height: 220px; background: #fff; padding: 8px; border-radius: 8px; margin: 12px 0; }
+.qr svg { width: 100%; height: 100%; display: block; }
+.secret { font-family: ui-monospace, Menlo, monospace; letter-spacing: .06em; word-break: break-all; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+.b-wait { background: var(--code); color: var(--muted); }
+.b-accept { background: var(--ok-bg); color: var(--ok); }
+.b-decline { background: var(--bad-bg); color: var(--bad); }
+ul.reviewers { list-style: none; padding: 0; margin: 0; }
+ul.reviewers li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+ul.reviewers li:last-child { border-bottom: 0; }
+.hidden { display: none !important; }
+.summary { margin: 0 0 12px; }
+.counts span { margin-right: 14px; font-weight: 600; }
+.c-add { color: var(--ok); } .c-del { color: var(--bad); } .c-mod { color: var(--warn); }
+table.deps { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-size: 14px; }
+table.deps td, table.deps th { text-align: left; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+table.deps th { color: var(--muted); font-weight: 600; }
+details.file { border-top: 1px solid var(--line); }
+details.file summary { cursor: pointer; padding: 8px 0; display: flex; gap: 10px; align-items: baseline; list-style: none; }
+details.file summary::-webkit-details-marker { display: none; }
+details.file summary .p { font-family: ui-monospace, Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; flex: 1; }
+details.file summary .tag { font-size: 12px; font-weight: 700; min-width: 70px; }
+details.file summary .note { color: var(--muted); font-size: 12px; white-space: nowrap; }
+pre.diff { margin: 0 0 12px; padding: 8px 0; background: var(--code); border-radius: 6px; overflow-x: auto; font: 12px/1.45 ui-monospace, Menlo, monospace; }
+pre.diff div { padding: 0 10px; white-space: pre; }
+pre.diff .add { background: var(--ok-bg); color: var(--ok); }
+pre.diff .del { background: var(--bad-bg); color: var(--bad); }
+pre.diff .hunk { color: var(--accent); }
+pre.diff .meta { color: var(--muted); }
+@media (max-width: 520px) { dl { grid-template-columns: 1fr; } dt { margin-top: 6px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Deploy review</h1>
+  <p class="sub" id="subtitle">Checking your link…</p>
+
+  <!-- link problem -->
+  <section class="card hidden" id="v-invalid">
+    <p id="invalid-text"></p>
+  </section>
+
+  <!-- sign in -->
+  <section class="card hidden" id="v-login">
+    <form id="f-login" autocomplete="on">
+      <label for="login">Reviewer login</label>
+      <input id="login" name="username" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <label for="totp">2FA code</label>
+      <input id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="123456">
+      <div class="hint">Leave empty on your first sign-in — you'll set up 2FA next.</div>
+      <div class="row"><button class="primary" type="submit" id="b-login">Sign in</button></div>
+      <div class="msg err" id="login-msg"></div>
+    </form>
+  </section>
+
+  <!-- 2FA enrollment -->
+  <section class="card hidden" id="v-enroll">
+    <p>Set up two-factor authentication. Scan this code with Google Authenticator, 1Password, Authy or a similar app:</p>
+    <div class="qr" id="qr"></div>
+    <div class="hint">Can't scan? Enter this key manually:</div>
+    <p class="secret" id="secret"></p>
+    <form id="f-enroll">
+      <label for="enroll-code">Code from the app</label>
+      <input id="enroll-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required placeholder="123456">
+      <div class="row"><button class="primary" type="submit" id="b-enroll">Confirm</button></div>
+      <div class="msg err" id="enroll-msg"></div>
+    </form>
+  </section>
+
+  <!-- the review -->
+  <section class="hidden" id="v-review">
+    <div class="card">
+      <dl>
+        <dt>Project</dt><dd id="r-project"></dd>
+        <dt>Uploaded by</dt><dd id="r-uploader"></dd>
+        <dt>Uploaded</dt><dd id="r-uploaded"></dd>
+        <dt>Decide before</dt><dd id="r-expires"></dd>
+        <dt>Archive</dt><dd id="r-archive"></dd>
+        <dt>Approval</dt><dd id="r-mode"></dd>
+      </dl>
+    </div>
+
+    <h2>Reviewers</h2>
+    <div class="card"><ul class="reviewers" id="r-reviewers"></ul></div>
+
+    <h2>Changes</h2>
+    <div class="card" id="r-changes"><p class="hint">Comparing with the last deployed version…</p></div>
+
+    <div class="card" id="r-actions">
+      <p id="r-question">Deploy this version?</p>
+      <div class="row">
+        <button class="accept" id="b-accept">Accept and deploy</button>
+        <button class="decline" id="b-decline">Decline</button>
+      </div>
+    </div>
+    <div class="msg" id="r-msg"></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var HOST = "{{host}}";
+
+  // ---- QR (byte mode, ECC M) ----
+  function qrMatrix(text, forcedMask) {
+    var ECC = [-1,10,16,26,18,24,16,18,22,22,26,30,22,22,24,24,28,28,26,26,26,26,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28];
+    var BLOCKS = [-1,1,1,1,2,2,4,4,4,5,5,5,8,9,9,10,10,11,13,14,16,17,17,18,20,21,23,25,26,28,29,31,33,35,37,38,40,43,45,47,49];
+    var bytes = Array.from(new TextEncoder().encode(text));
+    function rawModules(v) { var r = (16 * v + 128) * v + 64; if (v >= 2) { var n = Math.floor(v / 7) + 2; r -= (25 * n - 10) * n - 55; if (v >= 7) r -= 36; } return r; }
+    function dataCodewords(v) { return Math.floor(rawModules(v) / 8) - ECC[v] * BLOCKS[v]; }
+    var ver = 1;
+    for (; ver <= 40; ver++) if (4 + (ver < 10 ? 8 : 16) + bytes.length * 8 <= dataCodewords(ver) * 8) break;
+    if (ver > 40) throw new Error("text too long for a QR code");
+    var size = ver * 4 + 17;
+
+    // data bits
+    var bits = [];
+    function put(val, len) { for (var i = len - 1; i >= 0; i--) bits.push((val >>> i) & 1); }
+    put(4, 4); put(bytes.length, ver < 10 ? 8 : 16); bytes.forEach(function (b) { put(b, 8); });
+    var cap = dataCodewords(ver) * 8;
+    put(0, Math.min(4, cap - bits.length));
+    put(0, (8 - bits.length % 8) % 8);
+    for (var pad = 0xEC; bits.length < cap; pad ^= 0xEC ^ 0x11) put(pad, 8);
+    var data = [];
+    for (var i = 0; i < bits.length; i += 8) { var b = 0; for (var j = 0; j < 8; j++) b = (b << 1) | bits[i + j]; data.push(b); }
+
+    // Reed–Solomon over GF(256), polynomial 0x11D
+    function mul(x, y) { var z = 0; for (var i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; } return z & 0xFF; }
+    function divisor(deg) { var r = []; for (var i = 0; i < deg - 1; i++) r.push(0); r.push(1); var root = 1;
+      for (var i = 0; i < deg; i++) { for (var j = 0; j < r.length; j++) { r[j] = mul(r[j], root); if (j + 1 < r.length) r[j] ^= r[j + 1]; } root = mul(root, 2); } return r; }
+    function remainder(d, div) { var r = div.map(function () { return 0; });
+      d.forEach(function (b) { var f = b ^ r.shift(); r.push(0); div.forEach(function (c, i) { r[i] ^= mul(c, f); }); }); return r; }
+    var nb = BLOCKS[ver], el = ECC[ver], raw = Math.floor(rawModules(ver) / 8);
+    var nShort = nb - raw % nb, shortLen = Math.floor(raw / nb), div = divisor(el), blocks = [];
+    for (var i = 0, k = 0; i < nb; i++) {
+      var dat = data.slice(k, k + shortLen - el + (i < nShort ? 0 : 1)); k += dat.length;
+      var ecc = remainder(dat, div); if (i < nShort) dat.push(0); blocks.push(dat.concat(ecc));
+    }
+    var words = [];
+    for (var i = 0; i < blocks[0].length; i++) for (var j = 0; j < blocks.length; j++)
+      if (i !== shortLen - el || j >= nShort) words.push(blocks[j][i]);
+
+    // function patterns
+    var m = [], fn = [];
+    for (var y = 0; y < size; y++) { m.push(new Array(size).fill(false)); fn.push(new Array(size).fill(false)); }
+    function set(x, y, dark) { m[y][x] = dark; fn[y][x] = true; }
+    for (var i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+    function finder(cx, cy) { for (var dy = -4; dy <= 4; dy++) for (var dx = -4; dx <= 4; dx++) {
+      var d = Math.max(Math.abs(dx), Math.abs(dy)), x = cx + dx, y = cy + dy;
+      if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, d !== 2 && d !== 4); } }
+    finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+    var align = [];
+    if (ver > 1) { var na = Math.floor(ver / 7) + 2, step = Math.floor((ver * 8 + na * 3 + 5) / (na * 4 - 4)) * 2;
+      align = [6]; for (var p = size - 7; align.length < na; p -= step) align.splice(1, 0, p); }
+    for (var i = 0; i < align.length; i++) for (var j = 0; j < align.length; j++) {
+      if ((i === 0 && j === 0) || (i === 0 && j === align.length - 1) || (i === align.length - 1 && j === 0)) continue;
+      for (var dy = -2; dy <= 2; dy++) for (var dx = -2; dx <= 2; dx++) set(align[i] + dx, align[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }
+    function format(mask) {
+      var d = (0 << 3) | mask, r = d;            // error correction M = 00
+      for (var i = 0; i < 10; i++) r = (r << 1) ^ ((r >>> 9) * 0x537);
+      var b = ((d << 10) | r) ^ 0x5412, bit = function (i) { return ((b >>> i) & 1) !== 0; };
+      for (var i = 0; i <= 5; i++) set(8, i, bit(i));
+      set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8));
+      for (var i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+      for (var i = 0; i < 8; i++) set(size - 1 - i, 8, bit(i));
+      for (var i = 8; i < 15; i++) set(8, size - 15 + i, bit(i));
+      set(8, size - 8, true);
+    }
+    format(0);
+    if (ver >= 7) { var r = ver; for (var i = 0; i < 12; i++) r = (r << 1) ^ ((r >>> 11) * 0x1F25);
+      var vb = (ver << 12) | r;
+      for (var i = 0; i < 18; i++) { var bit = ((vb >>> i) & 1) !== 0, a = size - 11 + i % 3, c = Math.floor(i / 3); set(a, c, bit); set(c, a, bit); } }
+
+    // data placement (zigzag)
+    var bi = 0;
+    for (var right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (var vert = 0; vert < size; vert++) for (var j = 0; j < 2; j++) {
+        var x = right - j, up = ((right + 1) & 2) === 0, y = up ? size - 1 - vert : vert;
+        if (!fn[y][x] && bi < words.length * 8) { m[y][x] = ((words[bi >>> 3] >>> (7 - (bi & 7))) & 1) !== 0; bi++; }
+      }
+    }
+
+    function applyMask(k) { for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+      var inv;
+      switch (k) { case 0: inv = (x + y) % 2 === 0; break; case 1: inv = y % 2 === 0; break; case 2: inv = x % 3 === 0; break;
+        case 3: inv = (x + y) % 3 === 0; break; case 4: inv = (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0; break;
+        case 5: inv = x * y % 2 + x * y % 3 === 0; break; case 6: inv = (x * y % 2 + x * y % 3) % 2 === 0; break;
+        default: inv = ((x + y) % 2 + x * y % 3) % 2 === 0; }
+      if (!fn[y][x] && inv) m[y][x] = !m[y][x]; } }
+    function penalty() {
+      var score = 0;
+      function addHist(len, h) { if (h[0] === 0) len += size; h.pop(); h.unshift(len); }
+      function count(h) { var n = h[1], core = n > 0 && h[2] === n && h[3] === n * 3 && h[4] === n && h[5] === n;
+        return (core && h[0] >= n * 4 && h[6] >= n ? 1 : 0) + (core && h[6] >= n * 4 && h[0] >= n ? 1 : 0); }
+      function terminate(color, len, h) { if (color) { addHist(len, h); len = 0; } len += size; addHist(len, h); return count(h); }
+      for (var pass = 0; pass < 2; pass++) for (var a = 0; a < size; a++) {
+        var color = false, run = 0, h = [0, 0, 0, 0, 0, 0, 0];
+        for (var b = 0; b < size; b++) {
+          var cell = pass === 0 ? m[a][b] : m[b][a];
+          if (cell === color) { run++; if (run === 5) score += 3; else if (run > 5) score++; }
+          else { addHist(run, h); if (!color) score += count(h) * 40; color = cell; run = 1; }
+        }
+        score += terminate(color, run, h) * 40;
+      }
+      for (var y = 0; y < size - 1; y++) for (var x = 0; x < size - 1; x++) {
+        var c = m[y][x]; if (c === m[y][x + 1] && c === m[y + 1][x] && c === m[y + 1][x + 1]) score += 3; }
+      var dark = 0; m.forEach(function (row) { row.forEach(function (c) { if (c) dark++; }); });
+      var total = size * size;
+      score += (Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1) * 10;
+      return score;
+    }
+    var best = forcedMask, min = Infinity;
+    if (best === undefined) for (var k = 0; k < 8; k++) { applyMask(k); format(k); var p = penalty(); if (p < min) { min = p; best = k; } applyMask(k); }
+    applyMask(best); format(best);
+    return { size: size, version: ver, mask: best, modules: m };
+  }
+
+  function qrSvg(text) {
+    var q = qrMatrix(text), b = 4, n = q.size + b * 2, d = "";
+    for (var y = 0; y < q.size; y++) for (var x = 0; x < q.size; x++) if (q.modules[y][x]) d += "M" + (x + b) + " " + (y + b) + "h1v1h-1z";
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + n + " " + n + '" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="' + d + '" fill="#000"/></svg>';
+  }
+
+
+  // The link token travels in the URL fragment, which never reaches a server or a log.
+  // Keep it in memory and take it out of the address bar.
+  var linkToken = decodeURIComponent((location.hash || "").replace(/^#/, ""));
+  if (linkToken) history.replaceState(null, "", location.pathname + location.search);
+  var session = null, enrollmentToken = null, pollTimer = null, info = null;
+
+  function $(id) { return document.getElementById(id); }
+  function show(id) { ["v-invalid", "v-login", "v-enroll", "v-review"].forEach(function (v) { $(v).classList.toggle("hidden", v !== id); }); }
+  function text(id, value) { $(id).textContent = value == null ? "" : String(value); }
+  function msg(id, kind, value) { var el = $(id); el.className = "msg " + (value ? "show " + kind : ""); el.textContent = value || ""; }
+  function when(ms) { return ms ? new Date(ms).toLocaleString() : "—"; }
+  function size(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB"; }
+
+  function api(endpoint, body) {
+    var headers = { "Content-Type": "application/json" };
+    if (session) headers.Authorization = "Bearer " + session;
+    return fetch(HOST + endpoint, { method: "POST", headers: headers, body: JSON.stringify(body || {}), credentials: "omit", cache: "no-store" })
+      .then(function (r) { return r.json().catch(function () { return { error: { details: "Unexpected response (HTTP " + r.status + ")" } }; }); })
+      .then(function (j) {
+        if (j && j.error) { var e = new Error(j.error.details || j.error.message || "Request failed"); e.status = j.error.httpStatus; throw e; }
+        return j ? j.data : null;
+      });
+  }
+
+  function invalid(message) {
+    text("subtitle", "");
+    text("invalid-text", message);
+    show("v-invalid");
+  }
+
+  var STATE_TEXT = {
+    deploying: "Approved — deploying now…",
+    deployed: "Deployed.",
+    failed: "The deploy failed.",
+    declined: "Declined — the uploaded archive was deleted.",
+    expired: "Nobody decided in time — the upload was removed."
+  };
+
+  function start() {
+    if (!linkToken) return invalid("Open the link from your email. For your safety the page forgets it after loading, so reloading needs the link again.");
+    api("info", { token: linkToken }).then(function (d) {
+      info = d;
+      text("subtitle", d.project + " — uploaded by " + d.uploadedBy);
+      if (d.state !== "pending") {
+        invalid((STATE_TEXT[d.state] || d.state) + (d.result && d.result.message ? " " + d.result.message : ""));
+        return;
+      }
+      $("login").value = d.reviewer || "";
+      show("v-login");
+      ($("login").value ? $("password") : $("login")).focus();
+    }).catch(function (e) { invalid(e.message); });
+  }
+
+  $("f-login").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    msg("login-msg");
+    $("b-login").disabled = true;
+    api("login", { token: linkToken, login: $("login").value.trim(), password: $("password").value, totp: $("totp").value.trim() || undefined })
+      .then(function (d) {
+        $("password").value = "";
+        if (d.enrollmentRequired) {
+          enrollmentToken = d.enrollmentToken;
+          $("qr").innerHTML = qrSvg(d.otpauthUri);   // generated locally from data we trust; no user text
+          text("secret", d.secret.replace(/(.{4})/g, "$1 ").trim());
+          show("v-enroll");
+          $("enroll-code").focus();
+          return;
+        }
+        session = d.token;
+        loadReview();
+      })
+      .catch(function (e) { msg("login-msg", "err", e.message); })
+      .then(function () { $("b-login").disabled = false; });
+  });
+
+  $("f-enroll").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    msg("enroll-msg");
+    $("b-enroll").disabled = true;
+    api("enroll2fa", { enrollmentToken: enrollmentToken, totp: $("enroll-code").value.trim() })
+      .then(function (d) { session = d.token; enrollmentToken = null; $("qr").innerHTML = ""; text("secret", ""); loadReview(); })
+      .catch(function (e) { msg("enroll-msg", "err", e.message); })
+      .then(function () { $("b-enroll").disabled = false; });
+  });
+
+  function render(d) {
+    text("r-project", d.project);
+    text("r-uploader", d.uploadedBy);
+    text("r-uploaded", when(d.uploadedAt));
+    text("r-expires", when(d.expiresAt));
+    $("r-archive").innerHTML = "";
+    var c = document.createElement("code"); c.textContent = d.sha256.slice(0, 16) + "…";
+    c.title = "SHA-256 " + d.sha256;
+    $("r-archive").append(size(d.size) + ", ", c);
+    text("r-mode", d.mode === "all" ? "every reviewer must accept" : "one accept is enough");
+
+    var list = $("r-reviewers"); list.innerHTML = "";
+    d.reviewers.forEach(function (r) {
+      var li = document.createElement("li"), name = document.createElement("span"), badge = document.createElement("span");
+      name.textContent = r.login + (r.login === d.you ? " (you)" : "");
+      badge.className = "badge " + (r.decision === "accept" ? "b-accept" : r.decision === "decline" ? "b-decline" : "b-wait");
+      badge.textContent = r.decision ? r.decision + "ed " + when(r.at) : "waiting";
+      li.append(name, badge); list.append(li);
+    });
+
+    var mine = d.reviewers.filter(function (r) { return r.login === d.you; })[0];
+    var canDecide = d.state === "pending" && mine && !mine.decision;
+    $("r-actions").classList.toggle("hidden", !canDecide);
+
+    if (d.state === "pending" && mine && mine.decision === "accept")
+      msg("r-msg", "warn", "You accepted. Waiting for the other reviewers.");
+    else if (d.state === "deploying") msg("r-msg", "warn", STATE_TEXT.deploying);
+    else if (d.state === "deployed") msg("r-msg", "ok", (d.result && d.result.message) || STATE_TEXT.deployed);
+    else if (d.state === "failed") msg("r-msg", "err", STATE_TEXT.failed + (d.result ? " " + d.result.message : ""));
+    else if (d.state === "declined" || d.state === "expired") msg("r-msg", "err", STATE_TEXT[d.state] + (d.result ? " " + d.result.message : ""));
+    else msg("r-msg");
+
+    clearTimeout(pollTimer);
+    if (d.state === "deploying") pollTimer = setTimeout(loadReview, 3000);
+  }
+
+  var diffLoaded = false;
+  function loadReview() {
+    return api("details").then(function (d) {
+      show("v-review"); render(d);
+      if (!diffLoaded && d.state === "pending") {
+        diffLoaded = true;
+        api("diff").then(renderDiff).catch(function (e) { setChanges(note(e.message)); });
+      }
+    }).catch(sessionLost);
+  }
+
+  function el(tag, cls, value) { var e = document.createElement(tag); if (cls) e.className = cls; if (value != null) e.textContent = String(value); return e; }
+  function note(value) { return el("p", "hint", value); }
+  function setChanges() { var box = $("r-changes"); box.innerHTML = ""; for (var i = 0; i < arguments.length; i++) box.append(arguments[i]); }
+
+  var KIND_NOTE = { binary: "binary file", sensitive: "content hidden — sensitive file", large: "too large to show", symlink: "symlink" };
+  function renderDiff(d) {
+    if (d.unavailable) return setChanges(note(d.unavailable));
+    var parts = [];
+    var head = el("p", "summary");
+    if (d.baseline) head.textContent = "Compared with the last deployed version" + (d.baseline.version ? " " + d.baseline.version : "") + " (" + when(d.baseline.at) + ").";
+    else head.textContent = "This is the first reviewed deploy of the project — there is no earlier version to compare with, so every file is listed as added.";
+    parts.push(head);
+
+    var v = el("p");
+    v.append("Version: ", el("code", null, d.versionBefore || "—"), " → ", el("code", null, d.versionAfter || "—"));
+    parts.push(v);
+
+    var add = 0, del = 0, mod = 0;
+    d.files.forEach(function (f) { if (f.status === "added") add++; else if (f.status === "removed") del++; else mod++; });
+    var counts = el("p", "counts");
+    counts.append(el("span", "c-add", "+" + add + " added"), el("span", "c-del", "−" + del + " removed"), el("span", "c-mod", "~" + mod + " changed"), el("span", "hint", d.unchanged + " unchanged"));
+    parts.push(counts);
+    if (d.limited) parts.push(el("div", "msg show warn", d.limited));
+
+    if (d.dependencies.length) {
+      var t = el("table", "deps"), hr = el("tr");
+      ["Dependency", "Before", "After"].forEach(function (h) { hr.append(el("th", null, h)); });
+      t.append(hr);
+      d.dependencies.forEach(function (x) {
+        var tr = el("tr");
+        tr.append(el("td", null, x.name + (x.section !== "dependencies" ? " (" + x.section + ")" : "")),
+                  el("td", x.before ? null : "c-add", x.before || "added"),
+                  el("td", x.after ? null : "c-del", x.after || "removed"));
+        t.append(tr);
+      });
+      parts.push(el("h2", null, "Dependencies"), t);
+    }
+
+    if (d.files.length) parts.push(el("h2", null, "Files"));
+    d.files.forEach(function (f) {
+      var det = el("details", "file"), sum = el("summary");
+      var tagCls = f.status === "added" ? "c-add" : f.status === "removed" ? "c-del" : "c-mod";
+      sum.append(el("span", "tag " + tagCls, f.status), el("span", "p", f.path));
+      var sizes = f.sizeBefore != null && f.sizeAfter != null ? size(f.sizeBefore) + " → " + size(f.sizeAfter) : size(f.sizeAfter != null ? f.sizeAfter : f.sizeBefore || 0);
+      sum.append(el("span", "note", (KIND_NOTE[f.kind] ? KIND_NOTE[f.kind] + " · " : "") + sizes));
+      det.append(sum);
+      if (f.diff) {
+        var pre = el("pre", "diff");
+        f.diff.split("\n").forEach(function (line, i, all) {
+          if (i === all.length - 1 && line === "") return;
+          var cls = line.indexOf("@@") === 0 ? "hunk" : (line.indexOf("+++") === 0 || line.indexOf("---") === 0) ? "meta" : line[0] === "+" ? "add" : line[0] === "-" ? "del" : null;
+          pre.append(el("div", cls, line || " "));
+        });
+        det.append(pre);
+        if (f.truncated) det.append(note("The diff of this file is cut short."));
+      } else {
+        det.append(note(KIND_NOTE[f.kind] ? "No line-by-line view: " + KIND_NOTE[f.kind] + "." : "No content to show."));
+      }
+      parts.push(det);
+    });
+    if (!d.files.length) parts.push(note("No file differs from the last deployed version."));
+    setChanges.apply(null, parts);
+  }
+
+  function sessionLost(e) {
+    if (e.status === 401) {
+      session = null;
+      show("v-login");
+      msg("login-msg", "err", e.message);
+    } else {
+      msg("r-msg", "err", e.message);
+    }
+  }
+
+  function decide(decision) {
+    var question = decision === "accept"
+      ? "Accept and deploy " + (info ? info.project : "this version") + "?"
+      : "Decline? The uploaded archive will be deleted.";
+    if (!confirm(question)) return;
+    $("b-accept").disabled = $("b-decline").disabled = true;
+    api("decide", { decision: decision })
+      .then(function (d) { render(d); })
+      .catch(sessionLost)
+      .then(function () { $("b-accept").disabled = $("b-decline").disabled = false; });
+  }
+  $("b-accept").addEventListener("click", function () { decide("accept"); });
+  $("b-decline").addEventListener("click", function () { decide("decline"); });
+
+  start();
+})();
+</script>
+</body>
+</html>

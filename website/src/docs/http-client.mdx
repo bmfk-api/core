@@ -1,0 +1,56 @@
+```ts
+import { Http } from "{{pkg}}";
+
+const res = await Http.post("https://api.example.com/charge", { amount: 100 }, {
+  headers: { authorization: `Bearer ${token}` },
+  timeoutMs: 15_000,
+  retry: { enabled: true },
+});
+
+if (!res.ok) {
+  // res.status is undefined on network errors; res.error holds the details
+} else {
+  use(res.data);
+}
+```
+
+## Never throws
+
+`Http` never throws for HTTP or network errors: every call resolves to `{ ok, status, data, error }`.
+Error handling is an `if`, not a `try` around every call.
+
+## Retries and timeouts
+
+Requests are **not retried** unless a call asks for it, and time out after 5 seconds by default.
+`retry: { enabled: true }` retries once on a network error or on `429`, `502`, `503` and `504`:
+
+```ts
+await Http.get("https://unstable.example.com/rates", {
+  retry: { enabled: true, maxAttempts: 3, retryOnStatuses: [502, 503] },
+});
+```
+
+<Callout kind="warn" title="Why retries are off by default">
+A `504` or a dropped connection doesn't mean the other side did nothing: a retried `POST` may charge twice.
+Turn retries on for reads, or for writes the receiver deduplicates with an idempotency key. Multipart uploads
+are never retried, whatever the options say.
+</Callout>
+
+## Visible in the monitor
+
+Connections are pooled (undici). Every call is recorded for the [monitor](/docs/monitor):
+
+- an outgoing request log, redacted like every other log;
+- active connections per host;
+- latency percentiles p50, p95 and p99 per host;
+- the trace id of the incoming request each call was made for.
+
+A URL that carries a secret (a bot token in the path, a key in the query) is recorded only as its origin
+with `skipLogging: true`: the call stays visible — when, how long, which status — as `https://api.telegram.org`,
+marked “not logged”, without path, query, bodies or error text.
+
+```ts
+await Http.post(`https://api.telegram.org/bot${token}/sendMessage`, body, { skipLogging: true });
+```
+
+A slow acquirer or a degrading partner API shows up in the console before it shows up in complaints.

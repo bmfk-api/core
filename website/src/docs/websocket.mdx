@@ -1,0 +1,60 @@
+The WebSocket server shares the HTTP port. It listens on `baseEndPoint + endpoint`, for example
+`wss://api.example.com/api/v1/ws`.
+
+```ts
+getDefaultOptions({
+  websocketServer: {
+    endpoint: "ws",                 // default "ws"
+    authTimeoutMs: 10_000,          // the client must authorize within this time
+    onAuthorize: async (connection, message) => {
+      // `message` is the client's FIRST message, parsed JSON
+      const user = await sessions.find(message?.token);
+      return user ?? false;         // false / null → close 4401; an object → connection.auth
+    },
+    maxPayload: 256 * 1024,         // bytes per message → close 1009
+    maxMessagesPerSecond: 20,       // per connection   → close 1008
+    maxConnections: 1000,           // total           → HTTP 503
+    maxConnectionsPerIp: 50,        // per client IP   → HTTP 429
+  },
+});
+```
+
+## Events and broadcasting
+
+```ts
+import { S_WS_ON_CONNECTED, S_WS_ON_MESSAGE, S_WS_ON_CLOSE, REQ_WS_SERVER } from "{{pkg}}";
+
+S_WS_ON_CONNECTED.subscribe(conn => conn.send({ hello: conn.auth.name }));
+S_WS_ON_MESSAGE.subscribe(({ connection, message }) => { /* … */ });
+S_WS_ON_CLOSE.subscribe(conn => { /* … */ });
+
+const ws = await REQ_WS_SERVER.request();
+ws?.broadcast({ event: "price" }, c => c.auth.plan === "pro");
+```
+
+## The client
+
+Credentials go in the **first message**, not in the URL, so tokens don’t end up in proxy access logs:
+
+```js
+const socket = new WebSocket("wss://api.example.com/api/v1/ws");
+socket.onopen = () => socket.send(JSON.stringify({ token }));
+```
+
+## How connections are handled
+
+- **Authorization.** Messages sent while authorization is being checked are dropped. A connection that
+  doesn’t authorize within `authTimeoutMs` is closed with code 4408, also when `onAuthorize` itself is too slow.
+- **Origin check.** The browser `Origin` is checked as for HTTP (same-origin or `corsHostWhiteList`). This prevents
+  cross-site WebSocket hijacking.
+- **`onAuthorize` is required.** A server without it does not start, unless `public: true` says on purpose that every connection is accepted (a warning is logged at startup).
+- **Malformed frames** can’t crash the process.
+
+| Close code / status | Reason |
+|---|---|
+| 4401 | `onAuthorize` refused |
+| 4408 | not authorized in time |
+| 1008 | too many messages per second |
+| 1009 | message too large |
+| HTTP 429 | too many connections from one IP |
+| HTTP 503 | too many connections in total |

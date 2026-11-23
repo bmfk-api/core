@@ -1,0 +1,35 @@
+Blocked addresses get a `403` on every request — HTTP, WebSocket, the monitor and the documentation:
+
+```json
+{ "error": { "code": 403, "message": "Access from your address is blocked", "httpStatus": 403 } }
+```
+
+The check runs first, before body parsing, CORS and the interceptor, so a blocked client costs almost nothing.
+
+## Where the list lives
+
+`/var/bmfk/<project>/blocked-ips.json` — outside the code, so deploys and restores never touch it, and
+shared by both blue-green slots. It is re-read on change. The project name and folder rights are
+described in [Options → Data folder](/docs/options#data-folder).
+
+```jsonc
+[
+  { "ip": "203.0.113.7", "reason": "credential stuffing", "until": "2026-12-01T00:00:00Z" },
+  { "ip": "198.51.100.0/24", "reason": "scanner" }        // no "until" → permanent
+]
+```
+
+## Rules
+
+- **Editing.** By hand, or from the monitor (`sm/block`, `sm/unblock`; `admin` role), which records who blocked and when.
+- **Expiry.** Entries past `until` stop applying by themselves.
+- **Invalid edits** are ignored, and the previous list stays in force.
+- **Reasons stay private.** `reason` is shown only in the monitor, never to the client.
+- **Safety.** Loopback is never blocked, so a proxy without `X-Real-IP` can’t take the service down. An admin
+  can’t block their own address.
+- **Options.** `blockedIps: { file, message }` sets another location or error text; `blockedIps: false` turns blocking off.
+
+<Callout kind="note" title="Targeted, not volumetric">
+Blocking in the service suits a particular attacker or a scanner subnet. To stop a flood, block at nginx or
+with fail2ban, where requests are dropped before they reach Node.
+</Callout>

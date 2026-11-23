@@ -1,0 +1,18 @@
+```ts
+// caller: its own Ed25519 key, the host's public key
+new MicroserviceClient({
+  id: "ledger",
+  host: "https://ledger.internal.example.com/api",
+  kid: "gateway",
+  privateKey: secrets.GATEWAY_MS_KEY,
+  hostPublicKey: LEDGER_PUBLIC_KEY,
+});
+
+// runs once on the ledger, even across retries
+const entry = await REQ_MICROSERVICE_CALL.request({
+  id: "ledger",
+  requestName: "REQ_POST_ENTRY",
+  requestData: { paymentId, amount },
+  op: `payment-${paymentId}`,
+});
+```

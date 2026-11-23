@@ -1,0 +1,43 @@
+name: release
+
+# Publishing happens here only — never from a laptop. Tag a commit on main as v1.2.3.
+# A pre-release (v1.2.3-rc.1) goes to the `next` dist-tag: `npm i @bmfk/api@next`; `latest` is untouched.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write     # GitHub release with the SBOM
+  id-token: write     # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - name: Tag matches the package version
+        run: test "v$(node -p "require('./packages/api/package.json').version")" = "$GITHUB_REF_NAME"
+      - name: Release notes from the CHANGELOG   # v1.2.3-rc.1 takes the "## 1.2.3 — …" section
+        run: |
+          BASE="${GITHUB_REF_NAME#v}"; BASE="${BASE%%-*}"
+          awk -v v="## $BASE " 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on' packages/api/CHANGELOG.md > notes.md
+          test -s notes.md || { echo "No '## $BASE' section in packages/api/CHANGELOG.md"; exit 1; }
+      - run: npm run build            # the monitor UI shipped inside the package is built here, from source
+      - run: npm test -w @bmfk/api
+      - name: Publish
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then TAG=next; else TAG=latest; fi
+          npm publish -w @bmfk/api --provenance --access public --tag "$TAG"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm sbom -w @bmfk/api --sbom-format cyclonedx > sbom.cdx.json
+      - run: gh release create "$GITHUB_REF_NAME" sbom.cdx.json --title "$GITHUB_REF_NAME" --notes-file notes.md $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
+        env:
+          GH_TOKEN: ${{ github.token }}

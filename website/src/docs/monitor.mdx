@@ -1,0 +1,75 @@
+A web console for operations at `<baseEndPoint>sm/html`, plus the JSON API it uses.
+
+## What it shows
+
+| Section | Content |
+|---|---|
+| Process | memory, event-loop delay, open file descriptors and sockets with history (to catch leaks), pm2 identity |
+| System | CPU, RAM, disks, network and load |
+| Metrics | request rate, errors and latency by hour, day or week; 10 weeks kept in `/var/bmfk/<project>/metrics` |
+| Outgoing HTTP | p50 / p95 / p99 and active connections per host |
+| Logs | the application log, incoming and outgoing request logs, tails of pm2 and nginx log files |
+| Threats | clients that look like they are probing: scanners, `/wp-login.php`, `../`, bursts of 404s |
+| Actions | change the log level; restart the process via pm2 (password and 2FA code asked again) |
+
+Threat detection observes; it never blocks on its own. An admin can [block an address](/docs/ip-blocking)
+from the threats page.
+
+## Access
+
+```ts
+access: {
+  monitor: [
+    { login: "ops",     password: "scrypt$16384$8$1$…", role: "admin" },
+    { login: "support", password: "scrypt$16384$8$1$…", role: "it" },
+    { login: "finance", password: "scrypt$16384$8$1$…", role: "analytic" },
+  ],
+},
+monitorAuthDir: "/var/lib/my-service",   // where 2FA enrollments are kept
+```
+
+| Role | Can do |
+|---|---|
+| `admin` | everything, including restarts and IP blocking |
+| `it` | dashboard and logs |
+| `analytic` | dashboard only |
+
+- **Hashed passwords only.** Generate one with `npx {{cli}} hash-password`. A plain-text password in the config is refused.
+- **2FA is mandatory.** At the first login the console shows a QR code for any authenticator app.
+  Re-enrolling through the API is impossible on purpose; see [resetting 2FA](/docs/authentication#3-reset-a-users-2fa-lost-phone).
+- **Sessions** end after 15 minutes idle and after 8 hours in any case. 10 failed logins lock the account for 30 minutes.
+
+## Access in a file
+
+By default (`access: ""`) the service reads `/var/bmfk/<project>/access.json`; while the file doesn't exist,
+the monitor and the documentation are closed. `access` can also be another path
+(`access: "/etc/my-service/access.json"`) or an inline object of the same shape. `npx {{cli}} access-config`
+creates and edits the file from a menu, types passwords hidden and stores them as hashes.
+
+```jsonc
+{ "monitor": [ { "login": "ops", "password": "scrypt$…", "role": "admin" } ],
+  "documentation": [ { "login": "partner", "password": "…" } ],
+  "monitorAllowedIps": ["10.8.0.0/24", "203.0.113.7"] }
+```
+
+- **Applied without a restart.** The file is watched; changes apply within a second.
+- **Revocation.** Removing a user or changing their password ends their open sessions immediately. A role
+  change applies to the next request.
+- **Bad edits are ignored.** Broken JSON, an unknown role or a duplicate login: the change is ignored, the
+  previous access stays in force, and the reason is logged.
+- **Permissions.** Keep the file outside the deploy folders and `chmod 600` it. A warning is logged if other
+  users can read it.
+
+## Restricting by address
+
+`monitorAllowedIps` limits every `sm/*` request — the page and sign-in included — to the given IPs and CIDR
+subnets. A session token taken elsewhere is useless outside those addresses. Other addresses get `403`.
+
+<Callout kind="warn" title="Behind nginx">
+Pass `X-Real-IP` (see `trustedProxies` in [options](/docs/options)), otherwise every request appears to come
+from `127.0.0.1`.
+</Callout>
+
+<Callout kind="note" title="If you set monitorAuthDir, keep it outside the deploy folders">
+Otherwise a deploy wipes the enrollments and everyone has to enroll again. By default they are in `/var/bmfk/<project>/`.
+</Callout>

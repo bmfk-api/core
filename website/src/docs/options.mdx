@@ -1,0 +1,55 @@
+Options are passed to `getDefaultOptions({ … })`; anything omitted keeps its default.
+
+| Option | Default | Description |
+|---|---|---|
+| `port` | `8080` | HTTP port |
+| `baseEndPoint` | `"/api/"` | prefix for all endpoints |
+| `projectName` | `"Application project"` | shown in the monitor and as the 2FA issuer — set it |
+| `endpoints` | `[]` | your `BaseEndpoint` instances |
+| `corsHostWhiteList` | `[]` | browser origins allowed besides the API’s own; `"*"` allows any, without credentials |
+| `isProductionEnvironment` | `true` unless `NODE_ENV=development` | production mode |
+| `interceptor` | — | authentication for your endpoints |
+| `preproducer` / `postproducer` | — | hooks before the handler / before the response is sent |
+| `access` | `""` → `/var/bmfk/<project>/access.json` | a path to a JSON file reloaded on change, or `{ monitor, documentation, monitorAllowedIps }` |
+| `monitorAuthDir` / `monitorAuthFile` | `/var/bmfk/<project>/monitor-2fa.json` | where 2FA enrollments are stored |
+| `metricsDir` | `/var/bmfk/<project>/metrics` | metrics history, 10 weeks; `false` → in memory only |
+| `logFiles` | pm2, auto-detected | log files the monitor may tail, for example nginx |
+| `threatMonitoring` | `true` | probe and scan detection; observation only |
+| `trustedProxies` | loopback | proxies whose `X-Real-IP` / `X-Forwarded-For` are trusted |
+| `blockedIps` | `/var/bmfk/<project>/blocked-ips.json` | `{ file, message }`; `false` turns blocking off |
+| `websocketServer` | — | enables the [WebSocket server](/docs/websocket) |
+| `deployer` | — | turns this service into a [deployer](/docs/deployer) |
+| `blueGreenWatchMs` | `5000` | how often to check the active slot; `0` disables |
+| `jsonLimit` | `"10mb"` | maximum JSON / form body |
+| `fileTempDir` / `fileLimit` | `<data folder>/uploads` (mode 700) / 10 MB | uploads |
+| `keepAliveTimeout` / `headersTimeout` | 25 s / 26 s | HTTP server timeouts |
+| `appVersion` | — | returned in every response as `version` |
+
+## Data folder
+
+What has to survive restarts and deploys lives in one folder per project, outside the deployed code:
+
+```
+/var/bmfk/<project>/
+  metrics/            metrics history: the current week per minute, 10 weeks in all
+  threats.json        what the threat monitor has seen (addresses, user agents, URLs — never bodies)
+  blocked-ips.json
+  access.json         monitor and documentation users (option `access: ""`, the default)
+  monitor-2fa.json    monitor 2FA enrollments
+  uploads/            uploaded files while their request runs
+  secrets[-<slot>].json  config values the deployer keeps out of the code (`"secrets": {}`)
+```
+
+- **The project name is the deployer's.** On every deploy the deployer writes its project name into
+  the deployed `package.json` (and `package-lock.json`) `"name"`, and the app takes it from there. One
+  source tree deployed as several projects gets a folder per project; the two blue-green slots of one
+  project share theirs. Your repository's `package.json` is not changed. Off the deployer, the
+  `package.json` name is used as is. (`projectName` stays what the authenticator app shows.)
+- **One writer.** Only the live process writes metrics and threats: a blue-green standby and pm2 cluster workers
+  other than instance 0 count in memory only. A slot that becomes live loads what the other slot wrote,
+  so charts continue across deploys.
+- **Rights.** The app creates its folder (`0700`). If it can't create `/var/bmfk` — say, the app runs as
+  an unprivileged user — it says so at startup and falls back to a folder beside the code. Create the
+  root once: `sudo mkdir /var/bmfk && sudo chown <app user> /var/bmfk`.
+- `BMFK_DATA_DIR` moves the root. Each file can still be set on its own: `metricsDir` (`false` keeps
+  metrics in memory), `blockedIps.file`, `monitorAuthDir` / `monitorAuthFile`.

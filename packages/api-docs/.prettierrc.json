@@ -1,0 +1,9 @@
+{
+	"bracketSpacing": true,
+	"useTabs": true,
+	"tabWidth": 4,
+	"prettier.printWidth": 120,
+	"printWidth": 120,
+	"arrowParens": "avoid",
+	"bracketSameLine": true
+}

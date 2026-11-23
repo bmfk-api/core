@@ -1,0 +1,29 @@
+```ts
+import {
+  BaseEndpoint, IRequest, ValidationModel,
+} from "{{pkg}}";
+
+const refund = {
+  paymentId: 0,
+  amount: 0,
+  $__amount: { min: 1, details: "Amount in cents" },
+  reason: "",
+  $__reason_values: ["duplicate", "fraud", "customer"],
+};
+type Refund = ValidationModel<typeof refund>;
+
+export class Payments extends BaseEndpoint {
+  constructor() {
+    super("payments");
+    this.registerEndpoints([
+      { endpoint: "refund", handler: this.refund,
+        validationModel: refund },
+    ]);
+  }
+
+  async refund(req: IRequest<Refund>) {
+    // req.data is validated and typed
+    return { data: await refunds.create(req.data) };
+  }
+}
+```

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bmfk sandbox</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#5f6b7a; --line:#dfe3e8; --accent:#2457d6; --code:#f0f2f5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --card:#1a1f25; --text:#e6e9ed; --muted:#9aa5b1; --line:#2c333b; --accent:#6c9bff; --code:#0e1116; } }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width:880px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:16px; margin:0 0 8px; }
+  p.muted, .muted { color:var(--muted); }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-top:16px; }
+  .links a { display:inline-block; margin:0 16px 8px 0; color:var(--accent); font-weight:600; }
+  button { font:inherit; padding:6px 12px; margin:0 8px 8px 0; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--text); cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  pre { background:var(--code); border-radius:6px; padding:10px; overflow:auto; max-height:320px; font-size:13px; margin:8px 0 0; white-space:pre-wrap; word-break:break-word; }
+  input { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--text); width:220px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>bmfk sandbox</h1>
+  <p class="muted">Two services on this machine: this app and a ledger microservice. Background traffic runs every 3 s.</p>
+
+  <section class="links">
+    <h2>Built-in pages</h2>
+    <a href="../sm/html" target="_blank">Monitor</a><span class="muted">admin / sandbox, 2FA set up at the first sign-in</span><br>
+    <a href="../doc/html" target="_blank">API documentation</a><span class="muted">doc / sandbox, 2FA set up at the first sign-in</span><br>
+    <a href="../liveness" target="_blank">Liveness</a><a href="../readiness" target="_blank">Readiness</a>
+  </section>
+
+  <section>
+    <h2>Calls</h2>
+    <p class="muted">Each answer shows its trace id: find it in the monitor's Log, Net log and Outgoing journals.</p>
+    <button data-get="hello">hello</button>
+    <button data-post="echo" data-body='{"name":"Ann","amount":10,"currency":"EUR"}'>echo (valid)</button>
+    <button data-post="echo" data-body='{"amount":0,"currency":"GBP"}'>echo (invalid → 400)</button>
+    <button data-post="pay" data-body='{"amount":25,"currency":"EUR"}'>pay 25 via ledger</button>
+    <button data-post="pay" data-body='{"amount":5000,"currency":"EUR"}'>pay 5000 (ledger refuses)</button>
+    <button data-post="card" data-body='{"pan":"4111111111111111"}'>log card data (masked)</button>
+    <button data-get="slow">slow (1.5 s)</button>
+    <button data-get="boom">boom (500)</button>
+    <pre id="out">…</pre>
+  </section>
+
+  <section>
+    <h2>WebSocket</h2>
+    <p class="muted">The first message authorizes: <code>{"token":"sandbox"}</code>. Anything else closes with 4401.</p>
+    <button id="ws-open">connect</button>
+    <input id="ws-text" value='{"token":"sandbox"}'>
+    <button id="ws-send">send</button>
+    <button id="ws-close">close</button>
+    <pre id="ws-out">…</pre>
+  </section>
+</main>
+<script>
+  const out = document.getElementById("out");
+  const show = async (r) => {
+    let body; try { body = await r.json(); } catch { body = await r.text(); }
+    out.textContent = `HTTP ${r.status}  trace ${r.headers.get("x-request-id") ?? "—"}\n\n` + JSON.stringify(body, null, 2);
+  };
+  document.querySelectorAll("[data-get]").forEach(b => b.onclick = async () => show(await fetch(b.dataset.get)));
+  document.querySelectorAll("[data-post]").forEach(b => b.onclick = async () =>
+    show(await fetch(b.dataset.post, { method: "POST", headers: { "content-type": "application/json" }, body: b.dataset.body })));
+
+  const wsOut = document.getElementById("ws-out");
+  const log = (t) => { wsOut.textContent = (wsOut.textContent === "…" ? "" : wsOut.textContent + "\n") + t; };
+  let ws = null;
+  document.getElementById("ws-open").onclick = () => {
+    ws = new WebSocket(new URL("../ws", location.href).href.replace(/^http/, "ws"));
+    ws.onopen = () => log("open");
+    ws.onmessage = (e) => log("← " + e.data);
+    ws.onclose = (e) => log(`closed ${e.code} ${e.reason}`);
+  };
+  document.getElementById("ws-send").onclick = () => { const t = document.getElementById("ws-text").value; ws?.send(t); log("→ " + t); };
+  document.getElementById("ws-close").onclick = () => ws?.close();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "monitor": [
+    {
+      "login": "admin",
+      "password": "scrypt$16384$8$1$OrTs+TbMJo1wQoHgMBaqtQ==$42f4UhrhwImOP5YAQRweyOhqo314Bz7gJJ+huBJSzPI=",
+      "role": "admin"
+    }
+  ],
+  "documentation": [
+    {
+      "login": "doc",
+      "password": "scrypt$16384$8$1$B/9HiGYLWtlAuCZRU2ZlaQ==$M/suQw6uAsp2CZosJ43jRKazSLfIgBO+k8GjueoqpXU="
+    }
+  ]
+}

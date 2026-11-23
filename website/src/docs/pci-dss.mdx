@@ -1,0 +1,51 @@
+This page maps framework features to PCI DSS v4.0.1 requirements they help meet. It is guidance for your
+assessment, not a compliance statement: your QSA assesses the whole environment, including how you configure
+and operate the framework.
+
+<Callout kind="security" title="The framework is in scope too">
+To an assessor, a framework your team maintains is part of your bespoke software. Its own development falls
+under requirement 6: changes reviewed by someone other than the author (6.2.3.1), components inventoried
+(6.3.2), and critical vulnerabilities in dependencies fixed within a month (6.3.3).
+</Callout>
+
+## Protecting account data
+
+| Requirement | What the framework does | What stays with you |
+|---|---|---|
+| 3.3.1 — sensitive authentication data not kept after authorization | CVV/CVC, PIN and track data are redacted from every log and from the request logs in the monitor | not storing SAD in your database; not logging it on purpose |
+| 3.4.1 — PAN masked when displayed | PANs in logs and the monitor keep only the last four digits | masking in your own UIs and reports |
+| 4.2.1 — strong cryptography over open networks | microservice callers refuse plain `http` except to localhost | TLS configuration on nginx and certificates |
+
+## Secure software and change control
+
+| Requirement | What the framework does | What stays with you |
+|---|---|---|
+| 6.2.4 — software techniques against common attacks | request validation before handlers; archive path-traversal and symlink checks; origin checks for WebSockets | validation models on every endpoint; your business logic |
+| 6.5.1 — changes follow change control | every deploy is signed, versioned and recorded; [deploy review](/docs/deploy-review) holds it until approval | your change-control procedure and its records |
+| 6.5.4 — separated roles so only reviewed changes are deployed | reviewers approve with password and 2FA; the archive deployed must match the one reviewed | assigning reviewers other than the deployer |
+| 6.5.6 — test data and accounts removed before production | blue-green lets you test the new version on its own port before switching | your test data management |
+
+## Access control and authentication
+
+| Requirement | What the framework does | What stays with you |
+|---|---|---|
+| 7.2.1, 7.2.2 — access by role, least privilege | monitor roles `admin`, `it`, `analytic`; per-endpoint documentation access; per-caller microservice permissions | role assignment and periodic review |
+| 8.2.8 — re-authentication after 15 minutes idle | monitor, API-documentation and review sessions end after 15 minutes idle | the same for your own application |
+| 8.3.2 — authentication factors unreadable in storage | passwords and project tokens stored only as scrypt hashes; plain text refused | your application’s user store |
+| 8.3.4 — lockout after at most 10 attempts, for at least 30 minutes | monitor, API-documentation and reviewer accounts lock for 30 minutes after 10 failures | the same for your own application |
+| 8.3.6 — passwords of at least 12 characters | `hash-password` refuses shorter passwords | your application’s password policy |
+| 8.4.1, 8.4.2 — MFA for administrative and CDE access | TOTP is mandatory for the monitor, the API documentation and deploy review and can’t be turned off | MFA for SSH, databases and your own admin tools |
+
+## Logging and monitoring
+
+| Requirement | What the framework does | What stays with you |
+|---|---|---|
+| 10.2.1 — audit logs of access and changes | review history records every upload and decision with user, time, IP and archive hash; failed deployer sign-ins are logged with the reason | central log collection, retention for 12 months, daily review |
+| 10.6 — time synchronization | — | NTP on every server |
+| 11.4 — penetration testing | — | testing the application, monitor and deployer endpoints |
+
+## What the framework doesn’t cover
+
+Network segmentation and firewalls (requirement 1), system hardening (2), key management for stored cardholder
+data (3.6, 3.7), anti-malware (5), vulnerability scanning (11.3), file integrity monitoring (11.5) and your
+security policies (12) are outside a framework’s reach.

@@ -1,0 +1,27 @@
+With `"backup": true`, the deployer copies the destination aside before every deploy, for example to
+`/var/node/my-service/2026-10-14_18-45-09-my-service-blue`. It works for blue-green and regular projects.
+
+- **Complete copies.** A backup includes `node_modules`, permissions and symlinks, so a restore needs no network and no `npm ci`.
+- **Retention.** The last 10 backups per project are kept.
+- **Fail-closed.** If the backup fails — disk full, no permissions — the deploy stops without changing anything.
+
+## Listing and restoring
+
+```bash
+npm run backups                                                 # version, slot, who, when, size
+npm run restore                                                 # pick one interactively, confirm
+npx {{cli}} restore 2026-10-13_10-00-00-my-service-blue --yes   # non-interactive (CI)
+```
+
+## How a restore works
+
+1. The current state is backed up first, so a bad restore can be undone.
+2. The folders are swapped atomically, and the pm2 process restarts.
+3. Restoring the active slot, or a regular project, goes live immediately; the CLI warns about it. Restoring a
+   standby slot changes nothing until you `activate` it.
+
+<Callout kind="note" title="Configuration values">
+Values are baked in at deploy time, so a restored version comes back with the secrets it was deployed with —
+unless the project uses a [secrets file](/docs/deployer#keeping-secrets-out-of-the-deployed-code), in which case
+it reads the current ones.
+</Callout>

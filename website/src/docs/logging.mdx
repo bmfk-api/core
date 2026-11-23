@@ -1,0 +1,77 @@
+```ts
+import { logInfo, logWarn, logError, logCrit } from "{{pkg}}";
+
+logInfo("Order created", { orderId, amount });
+```
+
+## Redaction
+
+Every message is **redacted when it is written**. The objects you pass are never modified.
+
+| Category | What is masked |
+|---|---|
+| Card numbers | PANs inside any text, checked with Luhn and known card prefixes, keep only the last 4 digits; fields such as `pan`, `cardNumber`, `primaryAccountNumber` (DPAN) and `track2` are replaced whole |
+| Sensitive authentication data | CVV/CVC, PIN, expiry and cardholder-name fields, replaced with `<REDACTED>` |
+| Secrets | fields such as `password`, `token`, `authorization`, `cookie`, `apiKey`, `clientSecret`; secrets in query strings (`?token=…`); passwords in connection strings (`mysql://user:***@host`) |
+| Keys and tokens in text | PEM blocks, JWTs, `Bearer` / `Basic` credentials |
+
+```ts
+logInfo("charge", { pan: "4111111111111111", cvv: "123", amount: 100, note: "card 5555555555554444 ok" });
+// → { pan: "<REDACTED>", cvv: "<REDACTED>", amount: 100, note: "card xxxx...xxxx4444 ok" }
+
+logInfo("Bearer abc.def.ghi and mysql://u:secret@db");
+// → Bearer <REDACTED> and mysql://u:<REDACTED>@db
+```
+
+The incoming and outgoing request logs shown in the [monitor](/docs/monitor) go through the same redaction.
+
+## Your own output
+
+`LogService.sanitize(text)` and `LogService.sanitizeDeep(value)` apply the same rules anywhere else, for
+example before writing an error report or a support ticket. `sanitizeDeep` returns a copy.
+
+<Callout kind="warn" title="A safety net, not a policy">
+Don't log card data on purpose. Masking is pattern-based and can't recognize every format.
+</Callout>
+
+## Request tracing
+
+Every request gets a trace id, returned in the `X-Request-Id` header and as `traceId` in the response body. It
+follows everything the request causes:
+
+| Where | How |
+|---|---|
+| your handler | `req.traceId`, or `Trace.current()` anywhere the request’s code runs, across `await`s |
+| log items | `traceId` on every item written while handling the request |
+| the monitor | the incoming request log and the outgoing HTTP log |
+| [microservice calls](/docs/microservices) | the host continues the caller’s id: one operation, one id across services |
+
+When a user reports a problem, the id from the response finds every log line, outgoing call and downstream
+service call it caused.
+
+```ts
+logOpt.output = log => console.log(`[${log.traceId ?? "-"}] ${log.text}`);
+```
+
+<Callout kind="note" title="Behind nginx">
+`proxy_set_header X-Request-Id $request_id;` makes the service use nginx’s id, so the nginx access log shares it.
+The header is accepted only from `trustedProxies`; from anyone else it is ignored, so a client can’t plant an id
+that collides with someone else’s records.
+</Callout>
+
+## Log levels
+
+The level can be changed at runtime from the monitor, without a restart. Point `output` of the log options
+at your own sink to forward logs elsewhere:
+
+```ts
+import { LogService, getDefaultLogOptions, LOG_LEVEL } from "{{pkg}}";
+
+const logOpt = getDefaultLogOptions();
+logOpt.output = log => {
+  if (log.level === LOG_LEVEL.ERROR || log.level === LOG_LEVEL.CRIT) console.error(log);
+  else console.log(log.text);
+};
+
+Initializer([new LogService(logOpt), api]);
+```

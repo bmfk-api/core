@@ -1,0 +1,49 @@
+## What you get by default
+
+- **Credentials.** Monitor and deployer passwords are stored as salted scrypt hashes, and plain text in configs
+  is refused. Comparisons run in constant time. A deployer request costs at most one scrypt computation, so the
+  deployer can’t be used to burn CPU.
+- **Monitor access.** Mandatory TOTP 2FA, short sessions, lockout, roles, and the password asked again before a restart.
+- **Data in logs.** Card data and secrets are redacted when logs are written and when they are viewed in the
+  monitor. Logged objects are never modified.
+- **Client IP.** Proxy headers are trusted only from `trustedProxies`, so clients can’t spoof their address.
+- **Deploys.** Archives are checked for path traversal and escaping symlinks, install scripts are disabled, and
+  every deploy needs a user and the project token. Requests are signed with Ed25519, so the deployer keeps
+  only public keys and requests can’t be replayed or altered.
+- **Service-to-service calls.** Per-caller keys, signed answers, per-caller permissions, no shared secret.
+- **Blue-green.** Applications get a read-only status token; deploy credentials never reach them.
+- **WebSocket.** Origin checks, authorization within a time limit, limits on message size, rate and connections.
+- **Built-in endpoints** are hidden from the API documentation.
+
+## Cryptography
+
+The framework implements no cryptographic primitives of its own. Everything goes through Node.js `crypto`
+(OpenSSL):
+
+| Purpose | Algorithm |
+|---|---|
+| Password and token storage | scrypt (N = 16384, r = 8, p = 1), random salt |
+| Request and answer signatures | Ed25519 |
+| Second factor | TOTP (RFC 6238) |
+| Archive and payload digests | SHA-256 |
+
+## Before going to production
+
+1. List your other front-end origins in `corsHostWhiteList` (the API’s own origin is always allowed; behind nginx pass the host: `proxy_set_header Host $host;`).
+2. Store all monitor and deployer passwords as hashes (`npx {{cli}} hash-password`).
+3. Point `monitorAuthDir` to a persistent directory outside the deploy folders, readable only by the service user.
+4. Run behind nginx on loopback with TLS, and keep `trustedProxies` at its default unless the proxy is on another host.
+5. If you use WebSockets, set `onAuthorize` (required unless `public: true`).
+6. Keep `deploy.json` / `deploy/` out of version control, and restrict permissions on `setup.json` and project configs.
+7. Give every deploy user a signing key; keep `require_signature: false` only while they move.
+8. Keep credentials in [secrets files](/docs/deployer#keeping-secrets-out-of-the-deployed-code), not in code.
+9. Set a meaningful `projectName`; it is shown in authenticator apps.
+
+## What it doesn’t do
+
+- **It is not a WAF.** Threat monitoring records suspicious clients but never blocks them on its own. Use nginx
+  rate limiting, fail2ban or a WAF.
+- **It doesn’t make your system PCI DSS compliant by itself.** It helps with specific requirements; compliance
+  is assessed for your whole environment. See the [mapping](/docs/pci-dss).
+- **Redaction is pattern-based.** A safety net, not a substitute for not logging sensitive data.
+- **Microservice payloads aren’t encrypted beyond TLS.** Signatures give integrity and authenticity; confidentiality is TLS.

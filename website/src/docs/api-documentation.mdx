@@ -1,0 +1,33 @@
+`GET <baseEndPoint>doc/html` is an interactive page, and `<baseEndPoint>doc/json` is the same data as JSON.
+Both are built from your endpoints: titles, descriptions, request models, allowed `values` and result models.
+Nothing has to be written twice.
+
+## Access
+
+Access is restricted to users listed in `access.documentation`. A user can be limited to some endpoints:
+
+```ts
+access: {
+  documentation: [{ login: "partner", password: "scrypt$…", endpoints: ["/api/v1/orders"] }],
+}
+```
+
+Partners sign in the way monitor users do:
+
+- **Password stored as a hash** — `npx {{cli}} access-config` adds a user and can generate the password.
+- **Two factors.** A TOTP authenticator is set up at the first sign-in.
+- **Sessions** end after 15 minutes idle and 8 hours at most; 10 failed sign-ins lock the account for 30 minutes.
+- **Separate from the monitor.** A documentation session never opens the monitor, and the other way round.
+
+`doc/json` answers only with a session token (`Authorization: Bearer <token>` from `doc/login`).
+
+## What is shown
+
+| Source | Shown as |
+|---|---|
+| `title`, `description` of an endpoint | heading and text |
+| `validationModel` | request fields with types, optional flags and `details` |
+| `$__X_values` | allowed values |
+| `resultModel` | the response shape |
+
+Hide an endpoint with `ignoreInDocumentation`. The built-in `sm/*` and `pckg/*` endpoints are always hidden.

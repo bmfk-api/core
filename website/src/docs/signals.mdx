@@ -1,0 +1,23 @@
+Services talk to each other through signals and requests instead of importing each other. The library's own
+services work the same way: `REQ_DB`, `REQ_MICROSERVICE_CALL`, `REQ_HTTP_SERVER` are requests you can call.
+
+```ts
+import { Signal, Req } from "{{pkg}}";
+
+export const S_ORDER_PAID = new Signal<Order>("S_ORDER_PAID");          // one-to-many notification
+export const REQ_RATE = new Req<string, number>(undefined, "REQ_RATE");  // one worker answers
+
+S_ORDER_PAID.subscribe(order => notify(order));     // returns an id for unsubscribe(id)
+REQ_RATE.listener = async currency => rates.get(currency);
+
+S_ORDER_PAID.invoke(order);
+const rate = await REQ_RATE.request("EUR");
+```
+
+- **Order.** Subscribers run synchronously, in the order they subscribed. An `invoke` from inside a subscriber
+  runs after the current one.
+- **Errors.** A subscriber that throws does not stop the others or break the signal; the error goes to
+  `Signal.onError` (stderr by default).
+- **Changes while running** apply from the next `invoke`: a new subscriber is not called in the current one, a
+  removed one still is.
+- **Requests.** `request()` returns a promise that rejects when the worker throws or no worker is set.

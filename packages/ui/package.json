@@ -1,0 +1,11 @@
+{
+	"name": "@bmfk/ui",
+	"private": true,
+	"version": "1.0.0",
+	"description": "Components and React signal hooks shared by the built-in UIs of @bmfk/api (monitor, API documentation)",
+	"type": "module",
+	"peerDependencies": {
+		"react": "^19.3.1",
+		"styled-components": "^6.1.13"
+	}
+}

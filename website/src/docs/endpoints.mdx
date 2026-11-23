@@ -1,0 +1,89 @@
+An endpoint class groups handlers under one path segment.
+
+```ts
+import { BaseEndpoint, IRequest, IResponse } from "{{pkg}}";
+
+export class Users extends BaseEndpoint {
+  constructor() {
+    super("users");                       // → /api/v1/users/…
+    this.registerEndpoints([
+      {
+        endpoint: "get",                  // → /api/v1/users/get
+        handler: this.get,
+        title: "Get a user",
+        description: "Returns one user by id",
+        validationModel: { id: 0 },
+      },
+      {
+        endpoint: "profile",
+        handler: {                        // different handlers per HTTP method
+          GET:  this.profile,
+          POST: { controller: this.updateProfile, validationModel: { name: "" } },
+        },
+      },
+    ]);
+  }
+
+  async get(req: IRequest): Promise<IResponse> {
+    return { data: { id: req.data.id } };
+  }
+}
+```
+
+Register the class in `endpoints` of the service options.
+
+## The request
+
+`req.data` merges the JSON body, the form body and the query string. Other fields:
+
+| Field | Content |
+|---|---|
+| `req.headers` | request headers |
+| `req.params` | path parameters, for endpoints such as `session/:id` |
+| `req.files` | uploaded files |
+| `req.ip` | the real client address; see `trustedProxies` in [options](/docs/options) |
+| `req.method` | HTTP method |
+| `req.interceptorResult` | whatever your [interceptor](/docs/interceptors) returned |
+
+## Path parameters
+
+```ts
+{ endpoint: "session/:ssid", handler: this.session }
+// /api/v1/payments/session/42 → req.params.ssid === "42"
+```
+
+## Per-endpoint flags
+
+| Flag | Effect |
+|---|---|
+| `ignoreInterceptor` | skip authentication for this endpoint |
+| `allowInterceptorError` | run the handler even if the interceptor rejected the request |
+| `validationModel` | validate the request ([validation models](/docs/validation)) |
+| `resultModel` | describe the response in the API documentation (not checked at runtime) |
+| `asStream` | stream the response |
+| `ignoreInDocumentation` | hide from `doc/*` |
+| `ignoreHttpLogging` | keep out of the request log (polling endpoints, secrets) |
+| `independed` | register the path as is, without `baseEndPoint` |
+
+## Returning errors
+
+Throw or return an error object; both produce the standard error envelope.
+
+```ts
+import { DefaultErrors } from "{{pkg}}";
+
+throw { ...DefaultErrors.NOT_FOUND, details: "no such user" };
+// or
+return { error: { code: 1001, message: "Card expired", httpStatus: 422 } };
+```
+
+## Other responses
+
+A handler returns a `IResponse`. Besides `data` and `error` it can carry:
+
+| Field | Effect |
+|---|---|
+| `file` | send a file from disk |
+| `redirect` | redirect the client |
+| `headers` | extra response headers |
+| `httpStatus` | the status code of a successful response |

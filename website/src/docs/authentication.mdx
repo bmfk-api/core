@@ -1,0 +1,130 @@
+The framework protects five things, each in its own way:
+
+| What | Who uses it | How they sign in |
+|---|---|---|
+| Your API endpoints | your users and clients | your [interceptor](/docs/interceptors) |
+| Monitor (`sm/*`) | your operations team | password + mandatory TOTP 2FA, then a session token |
+| Documentation (`doc/*`) | developers and partners | login and password (a static token) |
+| Deployer (`pckg/*`) | CI and developers | Ed25519 signature or password, plus the project token |
+| Deploy review (`review/*`) | reviewers | personal emailed link + login, password and TOTP 2FA |
+
+The framework doesn’t manage the users of your application; that is your interceptor’s and database’s job.
+This page is about the built-in consoles.
+
+## 1. Generate a password hash
+
+Monitor and deployer configs store a salted scrypt hash, never the password itself.
+
+```text
+$ npx {{cli}} hash-password
+
+Hash a monitor password  (APIService access.monitor)
+Login: ops
+Password:                      ← typed input is not shown
+Repeat password:
+
+✓ Put this in the config instead of the plain password:
+
+  { "login": "ops", "password": "scrypt$16384$8$1$Rkps…$zrwU…" }
+```
+
+- **Deployer users** use `npx {{cli}} hash-password --deployer`. The hash differs from a monitor hash, so they can’t be swapped.
+- **Interactive only.** The password is never accepted as an argument, so it doesn’t end up in shell history or `ps`.
+- **Policy.** The minimum length is 12 characters.
+- **Plain text is refused** at login with the same answer as a wrong password; the server log says why.
+
+## 2. Sign in to the monitor
+
+Open `<baseEndPoint>sm/html` in a browser; the page runs this flow. The same flow over the API:
+
+**Log in.**
+
+```http
+POST /api/sm/login
+{ "login": "ops", "password": "…" }
+```
+
+**On the first login** the response is an enrollment instead of a session:
+
+```jsonc
+{ "data": {
+    "enrollmentRequired": true,
+    "enrollmentToken": "…",              // valid for 10 minutes
+    "secret": "JBSWY3DPEHPK3PXP",        // for manual entry
+    "otpauthUri": "otpauth://totp/my-service:ops?secret=…&issuer=my-service",
+    "expiresInMs": 600000 } }
+```
+
+**Enroll the authenticator.** Scan `otpauthUri` as a QR code and confirm with the current code. The secret is
+saved only after a correct code, and the response is already a session.
+
+```http
+POST /api/sm/enroll2fa
+{ "enrollmentToken": "…", "totp": "123456" }
+```
+
+**Later logins** send the code with the password:
+
+```http
+POST /api/sm/login
+{ "login": "ops", "password": "…", "totp": "123456" }
+```
+
+```jsonc
+{ "data": { "token": "…", "login": "ops", "role": "admin",
+            "capabilities": ["dashboard", "logs", "admin"],
+            "idleTimeoutMs": 900000, "maxLifetimeMs": 28800000, "twoFactor": true } }
+```
+
+**Call the monitor** with the session token:
+
+```http
+POST /api/sm/procinfo
+Authorization: Bearer <token>
+```
+
+| Rule | Value |
+|---|---|
+| Idle timeout | 15 minutes |
+| Maximum session | 8 hours; `POST sm/logout` ends it at once |
+| Lockout | 30 minutes after 10 failed logins |
+| Revocation | removing a user or changing a password ends their sessions immediately |
+| Restart | `sm/restart` asks for the password and TOTP again |
+| Errors | `401` — sign in again; `403` — the role doesn’t allow this section |
+
+## 3. Reset a user’s 2FA (lost phone)
+
+Re-enrolling through the API is impossible on purpose: otherwise anyone who learned the password could
+attach their own authenticator. To reset:
+
+1. Open `/var/bmfk/<project>/monitor-2fa.json` on the server (with `monitorAuthDir` set:
+   `<monitorAuthDir>/monitor-2fa.<projectName>.json`).
+2. Delete the user’s entry under `projects.<projectName>.users.<login>`.
+
+No restart is needed: within a second the user’s sessions end, and their next login shows a new QR code.
+Deleting the whole file resets 2FA for every user of the project.
+
+<Callout kind="security">
+The next person who knows the password enrolls their own authenticator. Reset 2FA only after confirming who is
+asking, and change the password at the same time.
+</Callout>
+
+## 4. Documentation users
+
+Users in `access.documentation` sign in on `<baseEndPoint>doc/html` exactly like monitor users: password hash,
+2FA set up at the first sign-in, sessions of 15 minutes idle / 8 hours at most, lockout after 10 failures.
+Their sessions don't open the monitor. Their 2FA enrollments sit in the monitor's 2FA file under `doc:<login>`;
+remove that entry to reset a partner's 2FA.
+
+## 5. Deployer users
+
+- **Server.** `setup.json` keeps public keys, or password hashes for users not yet moved to keys.
+- **Addresses.** `allowed_ips` in `setup.json` limits which addresses can reach the deployer at all.
+- **Client.** `deploy.json` holds the login and a private key (recommended) or a password. Either way the file
+  can deploy on its own: never share or commit it.
+- **On the wire.** With a key, `Authorization: Signature kid=…, ts=…, nonce=…, sig=…`, good for one request and
+  five minutes, covering the project, the fields and the archive.
+- **Project token.** Deploying, switching and restoring also need the project’s own token, stored on the server
+  only as a hash: `npx {{cli}} project-token`.
+
+See [Deployer and CLI](/docs/deployer).

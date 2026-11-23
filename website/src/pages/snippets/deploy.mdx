@@ -1,0 +1,16 @@
+```jsonc
+// deploy.json — on the machine you deploy from, never in git
+{
+  "name": "payments",
+  "host": "https://deployer.example.com/api/pckg/add",
+  "token": "<project token>",
+  "username": "ci",
+  "privateKey": "<from {{cli}} deploy-key>",   // Ed25519: the server keeps only the public key
+  "bundle": { "minify": true }
+}
+```
+
+```bash
+npm run deploy      # build → sign → upload → review → inactive slot
+npm run activate    # switch nginx to the new slot; rollback is the same command
+```

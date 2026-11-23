@@ -1,0 +1,90 @@
+{
+  "name": "@bmfk/api",
+  "version": "1.0.0",
+  "description": "TypeScript framework for HTTP API services: validated endpoints, signed microservice calls, a 2FA operations console and a deployer with blue-green releases",
+  "license": "MIT",
+  "author": "Igor Bloom",
+  "homepage": "https://github.com/bmfk-api/core#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bmfk-api/core.git",
+    "directory": "packages/api"
+  },
+  "bugs": {
+    "url": "https://github.com/bmfk-api/core/issues"
+  },
+  "keywords": [
+    "api",
+    "http",
+    "server",
+    "express",
+    "framework",
+    "deployer",
+    "blue-green",
+    "pci-dss"
+  ],
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "bmfk": "dist/apiServer/deployment/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc && cp ./src/apiServer/monitor/index.html ./dist/apiServer/monitor/index.html && cp ./src/apiServer/documentation/index.html ./dist/apiServer/documentation/index.html && cp ./src/apiServer/review/index.html ./dist/apiServer/review/index.html && chmod +x ./dist/apiServer/deployment/cli.js",
+    "test": "rm -rf build-test && tsc -p tsconfig.test.json && node --test build-test/test/*.test.js",
+    "test:coverage": "rm -rf build-test && tsc -p tsconfig.test.json && node --test --experimental-test-coverage build-test/test/*.test.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@types/express": "^5.0.6",
+    "@types/express-fileupload": "^1.5.1",
+    "@types/node": ">=24",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "express-fileupload": "^1.5.2",
+    "mysql2": "^3.24.4",
+    "pg": "^8.23.0",
+    "undici": "^7.30.2",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@babel/parser": "^7.29.11",
+    "@types/cors": "^2.8.19",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "@babel/parser": "^7.29.11",
+    "esbuild": "^0.28.2"
+  },
+  "peerDependenciesMeta": {
+    "@babel/parser": {
+      "optional": true
+    },
+    "esbuild": {
+      "optional": true
+    }
+  }
+}

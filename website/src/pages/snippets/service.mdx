@@ -1,0 +1,17 @@
+```ts
+import { APIService, Initializer, getDefaultOptions } from "{{pkg}}";
+
+const api = new APIService(getDefaultOptions({
+  port: 8080,
+  baseEndPoint: "/api/v1/",
+  projectName: "payments",
+  corsHostWhiteList: ["https://app.example.com"],
+  interceptor: new SessionInterceptor(),
+  access: "/etc/payments/access.json",   // monitor users, reloaded on change
+  monitorAuthDir: "/var/lib/payments",   // 2FA enrollments
+  endpoints: [new Payments()],
+}));
+
+Initializer([api]);
+// → /api/v1/payments/refund, /api/v1/doc/html, /api/v1/sm/html
+```

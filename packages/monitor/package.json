@@ -1,0 +1,36 @@
+{
+	"name": "@bmfk/monitor",
+	"private": true,
+	"version": "1.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "tsc && vite build && cp dist/index.html ../api/src/apiServer/monitor/index.html",
+		"lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
+	},
+	"dependencies": {
+		"axios": "^1.6.2",
+		"qrcode-generator": "^1.5.2",
+		"react": "^19.3.1",
+		"react-dom": "^19.3.1",
+		"styled-components": "^6.1.13"
+	},
+	"devDependencies": {
+		"@types/node": ">=24",
+		"@types/react": "^19.3.0",
+		"@types/react-dom": "^19.3.0",
+		"@typescript-eslint/eslint-plugin": "^8.7.0",
+		"@typescript-eslint/parser": "^8.7.0",
+		"@vitejs/plugin-react-swc": "^3.11.0",
+		"eslint": "^8.53.0",
+		"eslint-plugin-react-hooks": "^4.6.0",
+		"eslint-plugin-react-refresh": "^0.4.4",
+		"prettier": "^3.5.3",
+		"typescript": "^5.5.3",
+		"typescript-eslint": "^8.7.0",
+		"vite": "^6.4.6",
+		"vite-plugin-singlefile": "^2.0.3",
+		"vite-tsconfig-paths": "^5.1.4"
+	},
+	"description": "The operations console of @bmfk/api, built into one index.html that the library serves"
+}

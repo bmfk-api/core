@@ -1,0 +1,72 @@
+A project can require approval before anything reaches the server. The upload is held, each reviewer gets a
+personal link by email, and the deploy runs only after approval. Stolen deploy credentials alone can’t change
+production.
+
+## Setup
+
+Reviewers are defined in the deployer’s `setup.json`, with password hashes from `npx {{cli}} hash-password`.
+They set up 2FA at the first sign-in.
+
+```jsonc
+{
+  "reviewers": [
+    { "login": "lead", "password": "scrypt$16384$8$1$…", "email": "lead@example.com" },
+    { "login": "cto",  "password": "scrypt$16384$8$1$…", "email": "cto@example.com" }
+  ],
+  "review_url": "https://deployer.example.com/api/review/html",
+  "notifier": { "URL": "…", "KEY": "…" },      // sends the emails
+  "allowed_ips": ["10.8.0.0/24"]              // the review page is behind it too
+}
+```
+
+A project opts in from its config:
+
+```jsonc
+"review": { "reviewers": ["lead", "cto"], "mode": "all", "ttlHours": 24 }
+```
+
+- **`mode`.** `"any"`: one accept is enough. `"all"`: every reviewer must accept. Either way a single decline rejects.
+- **`ttlHours`.** How long links stay valid: 1 to 168 hours, 24 by default.
+
+If a project’s review can’t work — an unknown reviewer, no `review_url`, no notifier — the deployer says so at
+startup and refuses that project’s uploads until it is fixed.
+
+## How it works
+
+1. **`{{cli}} deploy`** uploads as usual. The archive passes every check and is held. The CLI prints
+   `WAITING FOR REVIEW`; production is untouched.
+2. **Each reviewer gets an email** with a personal link, which opens a sign-in with login, password and 2FA.
+3. **The page shows the changes** against the last deployed version: versions, dependency changes and a
+   line-by-line diff of added, removed and changed files.
+4. **Accept** runs the normal deploy from the stored archive, after checking that its SHA-256 still matches what
+   the reviewers saw. **Decline** deletes the archive.
+5. **A new upload** replaces the pending one; old links and open review sessions stop working.
+
+## What the diff shows and hides
+
+The comparison uses the **raw archives**: the last successful deploy’s and the new one. Deployed folders are
+never read, because config values are substituted there. Files such as `.env*`, `*.pem` and `*.key` are listed,
+but their content is never shown.
+
+## Security notes
+
+- **Personal links.** A link works only for its reviewer. The token is in the URL fragment, which never reaches server logs.
+- **Sessions** last 15 minutes idle and 1 hour at most, bound to one upload.
+- **Lockout** for 30 minutes after 10 failed sign-ins.
+- **Mail scanners** that “visit” links can’t approve anything: accept and decline need a signed-in click.
+
+<Callout kind="security" title="Separation of duties">
+Give the review to someone other than the person who deploys. That is what change control — for example
+PCI DSS 6.5 — expects.
+</Callout>
+
+## Audit trail
+
+All review data lives in `<projects_path>/.review/`, with permissions `600`:
+
+| File | Content |
+|---|---|
+| `<project>.history.jsonl` | every upload, decision and result, with IP addresses and the archive SHA-256 |
+| `<project>.pending.*` | the archive waiting for review and its state |
+| `<project>.last.tgz` | the last successful deploy’s archive, the “before” of the next diff |
+| `reviewers-2fa.json` | reviewers’ 2FA enrollments; delete an entry to reset it |

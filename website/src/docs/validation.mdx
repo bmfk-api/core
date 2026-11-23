@@ -1,0 +1,74 @@
+A validation model is a sample object: the type of each value is the type of the field. A sample value is only the type:
+`amount: 100` means “a number”, not “at most 100”. Limits are always written as `min` / `max`.
+
+```ts
+validationModel: {
+  email: "",                          // string, required
+  age: 0,                             // number
+  agree: false,                       // boolean
+  tags: [""],                         // array of strings
+  address: { city: "", zip: "" },     // nested object
+
+  status: "",
+  $__status_values: ["new", "paid", "refunded"],   // allowed values (shown in documentation too)
+
+  comment: "",
+  $__comment_optional: true,
+
+  amount: 0,
+  $__amount: { min: 1, max: 100000, details: "Amount in cents" },
+
+  phone: "",
+  $__phone: { regex: "^\\+[0-9]{8,15}$" },
+}
+```
+
+## Field options
+
+For a field `X`, options live either in `$__X` — an object, or a string used as the description — or in
+separate keys such as `$__X_optional`, `$__X_values` and `$__X_ignore_in_documentation`.
+
+| Option | Effect |
+|---|---|
+| `optional` | the field may be missing |
+| `default` | value used when the field is missing |
+| `values` | the only accepted values |
+| `min` / `max` | bounds for numbers |
+| `regex` | pattern a string must match |
+| `type` | a format such as `email`, `phone` or `date` |
+| `details` | description shown in the API documentation |
+
+Keys starting with `$__` are metadata, not fields: the validator never expects them in a request. Keys it
+doesn’t know are ignored, so a model can also carry your own annotations for tools such as admin UIs.
+
+## Types from models
+
+`ValidationModel<typeof model>` turns a model into a TypeScript type, with optional fields and allowed values
+included. One object is then both the runtime check and the static type:
+
+```ts
+import { ValidationModel, IRequest } from "{{pkg}}";
+
+const refund = {
+  paymentId: 0,
+  reason: "",
+  $__reason_values: ["duplicate", "fraud", "customer"],
+  note: "",
+  $__note_optional: true,
+};
+
+type Refund = ValidationModel<typeof refund>;
+// { paymentId: number; reason: "duplicate" | "fraud" | "customer"; note?: string }
+
+async function handler(req: IRequest<Refund>) { /* req.data.reason is the union */ }
+```
+
+## Outside endpoints
+
+`Validator.validateStructure(model, object)` checks any object against a model, for example a message from
+a queue or a file.
+
+## Describing responses
+
+`resultModel` describes what a handler returns. It is shown in the [API documentation](/docs/api-documentation)
+next to the request model. It is documentation only: the response is not checked at runtime.

@@ -1,0 +1,81 @@
+## Install
+
+```bash
+npm install {{pkg}}
+```
+
+## Create the service
+
+```ts
+// src/Main.ts
+import { APIService, Initializer, getDefaultOptions } from "{{pkg}}";
+import { Users } from "./endpoints/Users";
+
+const api = new APIService(getDefaultOptions({
+  port: 8080,
+  baseEndPoint: "/api/v1/",
+  projectName: "my-service",
+  isProductionEnvironment: true,
+  corsHostWhiteList: ["https://app.example.com"],
+  endpoints: [new Users()],
+}));
+
+Initializer([api]);
+```
+
+`Initializer` starts services in order. Your own services (database, queues, schedulers) go into the same
+list.
+
+## Add an endpoint
+
+```ts
+// src/endpoints/Users.ts
+import { BaseEndpoint, IRequest, IResponse } from "{{pkg}}";
+
+export class Users extends BaseEndpoint {
+  constructor() {
+    super("users");                         // → /api/v1/users/…
+    this.registerEndpoints([
+      {
+        endpoint: "get",                    // → /api/v1/users/get
+        handler: this.get,
+        title: "Get a user",
+        validationModel: { id: 0 },
+      },
+    ]);
+  }
+
+  async get(req: IRequest): Promise<IResponse> {
+    return { data: { id: req.data.id } };
+  }
+}
+```
+
+## Call it
+
+```bash
+curl -X POST http://localhost:8080/api/v1/users/get -H 'content-type: application/json' -d '{"id": 1}'
+```
+
+```jsonc
+{ "data": { "id": 1 }, "responseTime": 2, "endpoint": "/api/v1/users/get" }
+```
+
+A request without `id`, or with a string in it, is rejected before the handler runs.
+
+## What you get on top
+
+| Route | What |
+|---|---|
+| `/api/v1/doc/html` | interactive API documentation, built from your endpoints |
+| `/api/v1/sm/html` | the monitor console, once you add users to `access.monitor` |
+| `/api/v1/liveness`, `/api/v1/readiness` | health checks |
+
+## Next steps
+
+<Cards>
+  <Card title="Validation models" href="/docs/validation">Allowed values, ranges, formats and inferred types.</Card>
+  <Card title="Interceptors" href="/docs/interceptors">Authenticate callers before your handlers run.</Card>
+  <Card title="Monitor console" href="/docs/monitor">Give your team metrics and logs behind 2FA.</Card>
+  <Card title="Deployer" href="/docs/deployer">Ship it to a server with signed deploys.</Card>
+</Cards>

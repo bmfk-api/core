@@ -1,0 +1,66 @@
+An interceptor runs before every endpoint that doesn’t set `ignoreInterceptor`. It returns the caller’s
+identity, or an error.
+
+```ts
+import { IInterceptor, DefaultErrors, getDefaultOptions } from "{{pkg}}";
+
+class SessionInterceptor implements IInterceptor<{ userId: number }> {
+  async intercept(req) {
+    const user = await sessions.find(req.headers.authorization);
+    return user ?? { ...DefaultErrors.UNAUTHORIZED };
+  }
+}
+
+getDefaultOptions({ interceptor: new SessionInterceptor(), /* … */ });
+// handlers then read req.interceptorResult.userId
+```
+
+The type of `interceptorResult` follows from the interceptor passed to `getDefaultOptions`.
+
+## Signed server-to-server requests
+
+Two ready-made interceptors authenticate other servers. Both check a timestamp window and refuse a
+repeated nonce, so a captured request can’t be replayed.
+
+| | `InterceptorSignedAuth` | `InterceptorPayAuth` |
+|---|---|---|
+| Algorithm | Ed25519 signature | HMAC-SHA256 |
+| Server stores | public keys only | the shared key |
+| A stolen server config lets an attacker sign | no | yes |
+| Replay protection | 5-minute window, nonce accepted once | 5-minute window, nonce accepted once |
+
+Prefer `InterceptorSignedAuth` for new integrations.
+
+### InterceptorSignedAuth
+
+```ts
+import { InterceptorSignedAuth } from "{{pkg}}";
+
+// server: public keys by key id
+const interceptor = new InterceptorSignedAuth(kid => partners[kid]?.publicKey);
+// handlers then read req.interceptorResult.kid
+```
+
+```ts
+// client
+const { publicKey, privateKey } = InterceptorSignedAuth.generateKeyPair();   // once; publicKey goes to the server
+
+const authorization = InterceptorSignedAuth.sign({ privateKey, kid: "partner-1", method: "POST", url, data: body });
+await fetch(url, { method: "POST", headers: { authorization, "content-type": "application/json" }, body: JSON.stringify(body) });
+```
+
+The header looks like this:
+
+```http
+Authorization: Signature kid="partner-1", ts="1763560000000", nonce="…", sig="…"
+```
+
+- **What is signed.** The method, path, timestamp, nonce, every field and the sha256 of every uploaded file:
+  a request can’t be pointed at another path or carry other fields.
+- **Window.** A request is accepted up to 5 minutes after it was signed and 1 minute before (clock skew).
+- **Replay.** A nonce is accepted once per key.
+- **Keys.** Base64 DER: the public key as SPKI, the private key as PKCS#8. The server never needs the private key.
+
+<Callout kind="note">
+The deployer and [microservice calls](/docs/microservices) use the same signature scheme.
+</Callout>
