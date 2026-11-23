@@ -35,12 +35,16 @@ jobs:
         run: |
           npm sbom -w @bmfk/api --omit dev --sbom-format cyclonedx > sbom.cdx.json
           node .github/scripts/sbom-subject.cjs sbom.cdx.json
-      - name: Publish
+      - name: npm supports trusted publishing (11.5.1+)
+        run: |
+          node -e '
+            const [a, b, c] = process.argv[1].split(".").map(n => parseInt(n, 10));
+            if (a < 11 || (a === 11 && (b < 5 || (b === 5 && c < 1)))) throw new Error(`npm ${process.argv[1]} < 11.5.1`);
+          ' "$(npm --version)"
+      - name: Publish   # authenticated by OIDC (npm Trusted Publisher), no token
         run: |
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then TAG=next; else TAG=latest; fi
           npm publish -w @bmfk/api --provenance --access public --tag "$TAG"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: gh release create "$GITHUB_REF_NAME" sbom.cdx.json --title "$GITHUB_REF_NAME" --notes-file notes.md $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
         env:
           GH_TOKEN: ${{ github.token }}

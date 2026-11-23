@@ -14,7 +14,8 @@
     "monitor": "npm run dev -w @bmfk/monitor",
     "website": "npm run build -w bmfk-website",
     "api-docs": "npm run dev -w @bmfk/api-docs",
-    "sandbox": "npm run build && npm run build -w @bmfk/sandbox && npm start -w @bmfk/sandbox"
+    "sandbox": "npm run build && npm run build -w @bmfk/sandbox && npm start -w @bmfk/sandbox",
+    "publish": "node scripts/publish.mjs"
   },
   "engines": {
     "node": ">=24"
