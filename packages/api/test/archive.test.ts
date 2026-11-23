@@ -12,11 +12,13 @@ const escapingSymlink: (root: string) => string | null = (DeployerService as any
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bmfk-archive-test-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-function archive(name: string, build: (dir: string) => string[]): string {
+// keepPaths (-P): store names as given. GNU tar (Linux) otherwise strips "a/../" while creating, and the
+// hostile archive comes out harmless; bsdtar (macOS) keeps it either way.
+function archive(name: string, build: (dir: string) => string[], keepPaths = false): string {
     const dir = fs.mkdtempSync(path.join(tmp, "src-"));
     const entries = build(dir);
     const file = path.join(tmp, name);
-    execFileSync("tar", ["-czf", file, "-C", dir, ...entries]);
+    execFileSync("tar", [...(keepPaths ? ["-P"] : []), "-czf", file, "-C", dir, ...entries]);
     return file;
 }
 
@@ -30,7 +32,8 @@ test("an entry climbing out with .. is rejected", () => {
         fs.mkdirSync(path.join(d, "a"));
         fs.writeFileSync(path.join(d, "evil.js"), "1");
         return ["a/../evil.js"];
-    });
+    }, true);
+    assert.equal(execFileSync("tar", ["-tzf", file], { encoding: "utf-8" }).trim(), "a/../evil.js");   // the entry really is in there
     assert.ok(unsafeEntry(file));
 });
 
