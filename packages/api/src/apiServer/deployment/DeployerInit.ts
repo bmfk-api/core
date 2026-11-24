@@ -111,6 +111,27 @@ module.exports = {
     };
 }
 
+export interface IDeployerFolders { projectsPath: string, setupPath: string, baseEndPoint: string }
+
+/**
+ * The folders of a deployer made by deployer-init: read from <dir>/bin/Main.js, else the default
+ * /var/bmfk/bmfk-deployer when it exists. Null when neither is found.
+ */
+export function findDeployer(dir: string): IDeployerFolders | null {
+    let main = "";
+    try { main = fs.readFileSync(path.join(dir, "bin", "Main.js"), "utf-8"); } catch { }
+    const str = (key: string): string | null => {
+        const m = main.match(new RegExp(`\\b${key}:\\s*("(?:[^"\\\\]|\\\\.)*")`));
+        try { return m ? String(JSON.parse(m[1])) : null; } catch { return null; }
+    };
+    const projectsPath = str("projects_path"), setupPath = str("setup_path");
+    if (projectsPath && setupPath) return { projectsPath, setupPath, baseEndPoint: str("baseEndPoint") ?? "/api/" };
+    const def = AppData.projectDir("bmfk-deployer");
+    if (fs.existsSync(path.join(def, "projects")))
+        return { projectsPath: path.join(def, "projects"), setupPath: path.join(def, "setup"), baseEndPoint: "/api/" };
+    return null;
+}
+
 export function nginxSnippet(a: IDeployerInitAnswers): string {
     return `location ${a.baseEndPoint}pckg/ {
     proxy_pass http://127.0.0.1:${a.port};

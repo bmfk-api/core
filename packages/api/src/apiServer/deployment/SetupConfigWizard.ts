@@ -10,6 +10,7 @@ import { SETUP_MODEL } from "./DeployerService";
 import { askHidden } from "./HashPassword";
 import { palette } from "./cliCommon";
 import { ask, askValid, yes, list } from "./cliPrompt";
+import { findDeployer } from "./DeployerInit";
 
 /**
  * `bmfk setup-config [file|folder]` — edits the deployer's setup.json from a menu: deployer users
@@ -26,8 +27,9 @@ export async function SetupConfigWizard(target?: string): Promise<void> {
 
     let file = target ?? (["setup.json", "projects/setup.json"].find(f => fs.existsSync(f)) ?? "");
     if (target && fs.existsSync(target) && fs.statSync(target).isDirectory()) file = path.join(target, "setup.json");
+    const deployer = !file ? findDeployer(process.cwd()) : null;
     console.log(bold("\nDeployer setup.json") + dim("  (the deployer re-reads it on change)"));
-    file = path.resolve(file || await ask("File", "setup.json"));
+    file = path.resolve(file || await ask("File", deployer ? path.join(deployer.setupPath, "setup.json") : "setup.json"));
 
     let doc: any = { users: [] };
     if (fs.existsSync(file)) {

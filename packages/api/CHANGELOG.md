@@ -27,6 +27,19 @@ Security fixes reported by @sorokin-vladimir in #2–#5, reworked so existing Pa
 - Validation: only the model's own keys are fields. `constructor`, `toString` and other `Object.prototype`
   names passed into the request data unchecked.
 
+### Deployer
+
+- `bmfk project-config` and `bmfk setup-config` find the deployer made by `bmfk deployer-init` (its
+  `bin/Main.js` in the current folder, else `/var/bmfk/bmfk-deployer`). The project config is saved into
+  the deployer's projects folder by default, not the current folder, and `setup-config` opens its
+  `setup.json`.
+- `bmfk project-config`: when a project requires review, the wizard checks the deployer's `setup.json`.
+  It names reviewers that are not there, asks for `review_url` if it is missing (the review page,
+  `<deployer address><baseEndPoint>review/html`) and warns when no notifier is set. Uploads are refused
+  until all three are in place.
+- `bmfk project-config`: the `deploy.json` it writes has no password placeholder; the wizard points to
+  `bmfk deploy-key`, which adds the signing key.
+
 ## 1.0.1 — 2026-11-24
 
 ### Release process
