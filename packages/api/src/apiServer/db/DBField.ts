@@ -10,6 +10,8 @@ export type IDBField = IDBQueryField & { readonly [DB_FIELD]: true };
  * A field with options, for REQ_DB `fields`:
  *   updated: dbField("NOW()", { system: true })      // inserted as is: only for SQL written in code
  *   id: dbField(7, { ignoreInUpdate: true })         // left out of @onupdate
+ *   name: dbField("CONCAT(@first, ' ', @last)", { system: true, fields: { first, last } })
+ *                                                    // nested values are escaped; with system only
  */
 export function dbField(value: IDBQueryField["value"], options: Omit<IDBQueryField, "value" | "__parsedValue"> = {}): IDBField {
     return { ...options, value, [DB_FIELD]: true };

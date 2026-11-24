@@ -11,6 +11,9 @@
   `fields` is a value (stored as JSON); options such as `system` or `ignoreInUpdate` are given with
   `dbField(value, options)`.
 - `REQ_DB` no longer changes the caller's `fields`.
+- SQL injection through nested `fields`: in a value without `system`, nested values were put inside the
+  already escaped string. Nested fields now fill only a raw fragment (`system: true`). Nested values `0`,
+  `""`, `false` and `null` were skipped, leaving `@key` in the SQL; they are filled in now.
 
 ## 1.0.1 — 2026-11-24
 

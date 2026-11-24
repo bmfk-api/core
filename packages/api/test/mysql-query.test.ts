@@ -20,6 +20,22 @@ test("dbField() marks a field descriptor: raw SQL and macro options work only th
     assert.equal(sql, "INSERT INTO t (`id`,`name`,`updated`) VALUES (7,'bob',NOW()) ON DUPLICATE KEY UPDATE `name` = 'bob' , `updated` = NOW()");
 });
 
+test("nested fields fill only a raw SQL fragment: in an escaped value they can't break out of the quotes", () => {
+    const sql = adapter().prepareQuery({
+        query: "SELECT * FROM t WHERE a = @v",
+        fields: { v: dbField("pre-@n", { fields: { n: "x' OR 1=1 -- " } }) },
+    });
+    assert.equal(sql, "SELECT * FROM t WHERE a = 'pre-@n' LIMIT 100");
+});
+
+test("nested fields in a raw fragment are escaped, and 0, \"\", false, null are filled in too", () => {
+    const sql = adapter().prepareQuery({
+        query: "UPDATE t SET a = @v",
+        fields: { v: dbField("COALESCE(@s, @z, @e, @f, @n)", { system: true, fields: { s: "x' --", z: 0, e: "", f: false, n: null } }) },
+    });
+    assert.equal(sql, "UPDATE t SET a = COALESCE('x\\' --', 0, '', false, NULL)");
+});
+
 test("a dbField() survives REQ_DB, and the caller's fields are left as they were", async () => {
     // "postgres" registers the listeners without connecting; the adapter is swapped for one that
     // only builds SQL (parseQueryOnly answers before any connection is used).

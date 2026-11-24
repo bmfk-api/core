@@ -921,14 +921,14 @@ export class MysqlAdapter implements IDBAdapter {
                 value = value ? 1 : 0;
         }
 
-        if(field.fields && typeof field.fields ==="object" && value && typeof value==="string" && value.indexOf("@")!==-1){
+        // Nested fields fill a raw SQL fragment (system: true). An escaped value is already a quoted
+        // literal: an escaped nested value put inside it would close the quotes.
+        if(system && field.fields && typeof field.fields ==="object" && value && typeof value==="string" && value.indexOf("@")!==-1){
             // setup field in value — one pass, same reason as in prepareQuery
             const nested = new Map<string, string>();
-            for(let key in field.fields){
-                if(!field.fields[key])
-                    continue;
+            // Every key, 0 / "" / false / null included: skipping them left "@key" in the SQL.
+            for(let key in field.fields)
                 nested.set(key, mysql.escape(field.fields[key]));
-            }
             value = MysqlAdapter.substitute(value, nested);
         }
 
