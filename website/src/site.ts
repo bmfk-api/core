@@ -3,6 +3,7 @@
 export const site = {
   name: "bmfk",
   fullName: "Backend Modular Framework Kit",
+  url: "https://bmfk.net",
   tagline: "Build · Monitor · Fortify · Keep",
   pkg: "@bmfk/api",
   cli: "bmfk",

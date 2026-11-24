@@ -44,9 +44,15 @@ export const docs: DocEntry[] = groups.flatMap(g => g.items);
 
 const modules = import.meta.glob<{ default: ComponentType<any> }>("./*.mdx");
 const raw = import.meta.glob<string>("./*.mdx", { query: "?raw", import: "default", eager: true });
+const loaded = new Map<string, ComponentType<any>>();
 
 export function loadDoc(slug: string) {
-  return modules[`./${slug}.mdx`]?.();
+  return modules[`./${slug}.mdx`]?.().then(m => { loaded.set(slug, m.default); return m; });
+}
+
+// Already loaded (prerender, or before hydration): the page renders it on the first pass.
+export function loadedDoc(slug: string): ComponentType<any> | undefined {
+  return loaded.get(slug);
 }
 
 export function rawDoc(slug: string): string {

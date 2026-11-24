@@ -24,13 +24,25 @@ Works on Node 21 and later.
 
 ## Deploying
 
-`dist/` is a static single-page app. It can go through the framework's own deployer (a project without
-`./bin` and with `dist/index.html` is shipped as a static site). The web server must answer unknown paths with
-`index.html` so deep links work:
+`npm run build` prerenders every page into its own HTML file (`dist/docs/<slug>/index.html`, with its title,
+description, canonical URL and Open Graph tags), and writes `404.html`, `sitemap.xml` and `robots.txt`. The site
+address is `url` in `src/site.ts`. The pages are readable without JavaScript; React takes over in the browser.
+
+`dist/` can go through the framework's own deployer (a project without `./bin` and with `dist/index.html` is
+shipped as a static site). The web server serves the page files and answers unknown paths with a real 404:
 
 ```nginx
-location / {
-  try_files $uri /index.html;
+server {
+  server_name bmfk.net;
+  root /path/to/dist;
+  location / {
+    try_files $uri $uri/index.html =404;
+  }
+  error_page 404 /404.html;
+}
+server {
+  server_name www.bmfk.net;
+  return 301 https://bmfk.net$request_uri;
 }
 ```
 
