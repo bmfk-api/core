@@ -4,7 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawn } from "child_process";
-import { deployerInitFiles, nginxSnippet, normalizeBase, publicKeyProblem, IDeployerInitAnswers } from "../src/apiServer/deployment/DeployerInit";
+import { deployerInitFiles, findDeployer, nginxSnippet, normalizeBase, publicKeyProblem, IDeployerInitAnswers } from "../src/apiServer/deployment/DeployerInit";
 import { InterceptorSignedAuth } from "../src/apiServer/interceptors/InterceptorSignedAuth";
 import { exitWhenDone, waitFor } from "./helpers";
 
@@ -17,6 +17,29 @@ test("input checks: public keys and the base path", () => {
     assert.match(String(publicKeyProblem("hello")), /not a public key/);
     assert.equal(normalizeBase("deployer/v1"), "/deployer/v1/");
     assert.equal(normalizeBase(""), "/");
+});
+
+test("the wizards find the deployer's folders in the generated bin/Main.js", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deployer-find-"));
+    const a: IDeployerInitAnswers = {
+        name: "d", port: 9915, baseEndPoint: "/deploy/", maxArchiveMb: 10,
+        projectsPath: "/srv/my \"deployer\"/projects", setupPath: "/srv/my \"deployer\"/setup",
+        users: [{ login: "ci", publicKey: keys.publicKey }], allowedIps: [],
+    };
+    fs.mkdirSync(path.join(dir, "bin"));
+    fs.writeFileSync(path.join(dir, "bin", "Main.js"), deployerInitFiles(a, null)["bin/Main.js"].content);
+    assert.deepEqual(findDeployer(dir), { projectsPath: a.projectsPath, setupPath: a.setupPath, baseEndPoint: "/deploy/" });
+
+    const prev = process.env.BMFK_DATA_DIR;
+    process.env.BMFK_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "deployer-root-"));
+    try {
+        const empty = fs.mkdtempSync(path.join(os.tmpdir(), "deployer-none-"));
+        assert.equal(findDeployer(empty), null);
+        fs.mkdirSync(path.join(process.env.BMFK_DATA_DIR, "bmfk-deployer", "projects"), { recursive: true });
+        assert.equal(findDeployer(empty)?.projectsPath, path.join(process.env.BMFK_DATA_DIR, "bmfk-deployer", "projects"));
+    } finally {
+        if (prev === undefined) delete process.env.BMFK_DATA_DIR; else process.env.BMFK_DATA_DIR = prev;
+    }
 });
 
 // Runs the generated file against the built package: `npm run build` first (CI does).

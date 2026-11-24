@@ -807,10 +807,10 @@ rejects the whole change, and the previous setup stays in force.
 > it, every request appears to come from `127.0.0.1`. Never add `127.0.0.1` to `allowed_ips` on a
 > deployer behind a proxy on the same host: that would let every request through.
 
-A project config (`projects_path/<name>.json`). The easiest way to make one is `npx bmfk project-config`:
-it asks for everything below, generates the token, takes config values as hidden input, checks the
-result against the deployer's schema, and saves the project config and a matching `deploy.json` with
-permissions `600`.
+A project config (`projects_path/<name>.json`). The easiest way to make one is `npx bmfk project-config`
+in the deployer's folder: it asks for everything below, generates the token, takes config values as
+hidden input, checks the result against the deployer's schema, and saves the project config into the
+deployer's projects folder and a matching `deploy.json`, both with permissions `600`.
 
 ```jsonc
 {

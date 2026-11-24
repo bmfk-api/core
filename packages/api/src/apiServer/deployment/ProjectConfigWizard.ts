@@ -8,6 +8,7 @@ import { PROJECT_CONFIG_MODEL, projectNameProblem } from "./ConfigService";
 import { askHidden } from "./HashPassword";
 import { palette } from "./cliCommon";
 import { ask, askValid, yes, list, tokens } from "./cliPrompt";
+import { findDeployer } from "./DeployerInit";
 
 /**
  * `bmfk project-config` — asks for a project's deploy settings and produces:
@@ -25,6 +26,16 @@ export async function ProjectConfigWizard(): Promise<void> {
     const section = (title: string) => console.log("\n" + bold(title));
 
     console.log(bold("\nNew project config for the deployer") + dim("  (Enter keeps the value in brackets)"));
+    const deployer = findDeployer(process.cwd());
+    if (deployer) console.log(dim(`  Deployer: project configs in ${deployer.projectsPath}, setup.json in ${deployer.setupPath}`));
+    else console.log(yellow("  No deployer found here (bin/Main.js from deployer-init) — run this in the deployer's folder, or copy the result there."));
+    const setupFile = deployer ? path.join(deployer.setupPath, "setup.json") : null;
+    let setupDoc: any = null;
+    if (setupFile && fs.existsSync(setupFile)) {
+        try { setupDoc = JSON.parse(fs.readFileSync(setupFile, "utf-8") || "{}"); }
+        catch { console.log(yellow(`  ⚠ ${setupFile} is not valid JSON — fix it with npx bmfk setup-config`)); }
+    }
+    let reviewUrl: string | null = null;
 
     section("Project");
     const name = await askValid("Name (e.g. api.gateway.example.com)", "", v => projectNameProblem(v));
@@ -116,6 +127,23 @@ export async function ProjectConfigWizard(): Promise<void> {
         const mode = (await askValid("  approval: any (one accept) / all (everyone)", "any", v => v === "any" || v === "all" ? null : "any or all"));
         const ttlHours = Number(await askValid("  hours to decide", "24", v => /^\d+$/.test(v) && +v >= 1 && +v <= 168 ? null : "1–168"));
         cfg.review = { reviewers, mode, ttlHours };
+        if (setupDoc) {
+            const known = new Set((Array.isArray(setupDoc.reviewers) ? setupDoc.reviewers : []).map((r: any) => r?.login));
+            const unknown = reviewers.filter(r => !known.has(r));
+            if (unknown.length) console.log(yellow(`  ⚠ Not reviewers in ${setupFile}: ${unknown.join(", ")} — add them with npx bmfk setup-config`));
+            if (!/^https?:\/\/[^\s#]+$/.test(String(setupDoc.review_url ?? ""))) {
+                console.log(dim(`  The review page is <deployer address>${deployer!.baseEndPoint}review/html, as reviewers open it.`));
+                reviewUrl = await askValid("  review_url for setup.json (empty = set it later)", "",
+                    v => !v || /^https?:\/\/[^\s#]+$/.test(v) ? null : "an http(s) URL without #") || null;
+            }
+            if (!setupDoc.notifier?.URL || !setupDoc.notifier?.KEY)
+                console.log(yellow("  ⚠ No notifier in setup.json: reviewers can't be emailed their links — npx bmfk setup-config."));
+            console.log(yellow("  Until reviewers, review_url and the notifier are in setup.json, the deployer refuses this project's uploads."));
+        } else {
+            console.log(yellow("  ⚠ The deployer's setup.json must also have these reviewers, review_url (the review page, e.g.\n" +
+                "    https://deployer.example.com/api/review/html) and a notifier for the emails — npx bmfk setup-config.\n" +
+                "    Until then the deployer refuses this project's uploads."));
+        }
     }
 
     // The same schema the deployer uses.
@@ -127,24 +155,36 @@ export async function ProjectConfigWizard(): Promise<void> {
     }
 
     section("Deploy client (deploy.json for the project)");
-    const host = await ask("  deployer upload URL", "https://deployer.example.com/api/pckg/add");
+    const host = await ask("  deployer upload URL", `https://deployer.example.com${deployer?.baseEndPoint ?? "/api/"}pckg/add`);
     const username = await ask("  deployer user login", "");
 
     const projectJson = JSON.stringify(cfg, null, 4);
-    const deployJson = JSON.stringify({ name, host, token: plainToken ?? "<the existing token>", username, password: "<your deployer password>" }, null, 4);
+    // No credentials: `bmfk deploy-key` adds the signing key (only signed requests are accepted by default).
+    const deployJson = JSON.stringify({ name, host, token: plainToken ?? "<the existing token>", username }, null, 4);
 
     console.log("");
-    const save = async (what: string, content: string, def: string) => {
+    const save = async (what: string, content: string, def: string): Promise<string | null> => {
         const target = await ask(`Save ${what} to (empty = print here)`, def);
-        if (!target) { console.log("\n" + content + "\n"); return; }
-        if (fs.existsSync(target) && !(await yes(`  ${target} exists — overwrite?`, false))) { console.log("\n" + content + "\n"); return; }
-        fs.mkdirSync(path.dirname(path.resolve(target)), { recursive: true });
+        if (!target) { console.log("\n" + content + "\n"); return null; }
+        if (fs.existsSync(target) && !(await yes(`  ${target} exists — overwrite?`, false))) { console.log("\n" + content + "\n"); return null; }
+        fs.mkdirSync(path.dirname(path.resolve(target)), { recursive: true, mode: 0o700 });
         fs.writeFileSync(target, content + "\n", { encoding: "utf-8", mode: 0o600 });
         console.log(green(`  ✓ ${path.resolve(target)}`) + dim(" (0600)"));
+        return path.resolve(target);
     };
-    await save("the project config for the deployer", projectJson, `${name}.json`);
-    console.log(dim(`  → copy it to <projects_path>/${name}.json on the deployer; it is picked up without a restart.`));
+    const saved = await save("the project config for the deployer", projectJson,
+        deployer ? path.join(deployer.projectsPath, `${name}.json`) : `${name}.json`);
+    if (!saved || !deployer || path.dirname(saved) !== path.resolve(deployer.projectsPath))
+        console.log(dim(`  → copy it to <projects_path>/${name}.json on the deployer; it is picked up without a restart.`));
+    if (reviewUrl && setupFile) {
+        const tmp = setupFile + ".tmp";
+        fs.writeFileSync(tmp, JSON.stringify({ ...setupDoc, review_url: reviewUrl }, null, 4) + "\n", { encoding: "utf-8", mode: 0o600 });
+        fs.chmodSync(tmp, 0o600);
+        fs.renameSync(tmp, setupFile);
+        console.log(green(`  ✓ review_url set in ${setupFile}`));
+    }
     await save("deploy.json for the project", deployJson, "");
     if (plainToken) console.log(yellow("  The token is shown only here and in deploy.json — the deployer keeps its hash. Keep deploy.json out of git."));
+    console.log(dim("  Then, on the machine you deploy from: npx bmfk deploy-key deploy.json — and add the printed public key to setup.json."));
     if (cfg.review) console.log(dim("  Reviewers must exist in the deployer's setup.json; it says at startup if anything is missing."));
 }

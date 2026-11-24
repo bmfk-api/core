@@ -86,7 +86,7 @@ const _TSetup={
     $__reviewers_optional:true,
 
     // Public address of the review page, reachable by reviewers (e.g. over VPN, within allowed_ips):
-    // "https://deployer.example.com/api/pckg/review". Links are <review_url>#<token>.
+    // "https://deployer.example.com/api/review/html" (<baseEndPoint>review/html). Links are <review_url>#<token>.
     review_url:"",
     $__review_url_optional:true,
 
