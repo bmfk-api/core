@@ -5,6 +5,9 @@ import { IDBAdapter } from "./db/IDBAdapter";
 import { MysqlAdapter } from "./db/MysqlAdapter";
 import { logDB } from "./LogService";
 import { PostgresAdapter } from "./db/PostgresAdapter";
+import type { IDBField } from "./db/DBField";
+export { dbField } from "./db/DBField";
+export type { IDBField } from "./db/DBField";
 
 
 export interface IDBQueryField {
@@ -18,8 +21,9 @@ export interface IDBQueryField {
     fields?:Record<string,number|boolean|string|null>
 }
 
+// A plain object or array is a value (stored as JSON); options only through dbField().
 export interface IDBQueryFields {
-    [key: string]: string | number | boolean |Date| IDBQueryField | null | undefined 
+    [key: string]: string | number | boolean | Date | IDBField | Record<string, unknown> | unknown[] | null | undefined
 }
 
 export interface IDBQuery {
@@ -280,9 +284,8 @@ export class DBService extends BaseService {
 
         REQ_DB.listener = async (req) => {
 
-            if(req.fields)
-                req.fields = structuredClone(req.fields) // create copy of fields (preserves Date objects, unlike JSON round-trip)
-
+            // No copy of req.fields: the adapter doesn't change them, and structuredClone would drop
+            // the mark of every dbField().
             const executionStartTime = Date.now()
             // only one db instance
             if (!req.dbid && DBService.allInstances.length === 1 && DBService.allInstances[0].adapter){

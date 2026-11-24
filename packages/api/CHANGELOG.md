@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.2 — 2026-11-24
+
+### Security
+
+- SQL injection through request data. The validator kept keys that exist only on `Object.prototype`
+  (`constructor`, `toString`, …), and `REQ_DB` treated any object in `fields` as a field descriptor, so
+  `{"constructor": {"value": "1); DROP TABLE users; --", "system": true}}` passed validation and went into
+  `@insert` unescaped. The validator now keeps only the model's own keys. **Breaking:** a plain object in
+  `fields` is a value (stored as JSON); options such as `system` or `ignoreInUpdate` are given with
+  `dbField(value, options)`.
+- `REQ_DB` no longer changes the caller's `fields`.
+
 ## 1.0.1 — 2026-11-24
 
 ### Release process
