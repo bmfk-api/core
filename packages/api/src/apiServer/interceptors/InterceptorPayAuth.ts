@@ -17,6 +17,12 @@ const _TAuthParams = {
 }
 type TAuthParams = ValidationModel<typeof _TAuthParams>
 
+// The signed message, one field per line:
+//   bmfk-payauth-v1 · METHOD · URL path · kid · ts · nonce · b64
+// Separators keep one field from sliding into the next (a glued "ts+nonce" lets ts digits move into
+// the nonce with the same signature), and method, path and kid bind the request to its endpoint.
+const VERSION = "bmfk-payauth-v1";
+
 
 export class InterceptorPayAuth implements IInterceptor<any> {
 
@@ -98,21 +104,15 @@ export class InterceptorPayAuth implements IInterceptor<any> {
 		if (errors)
 			throw { ...DefaultErrors.UNAUTHORIZED, details: "Malformed authorization header", stack: errors }
 
-		// `ts` is Unix epoch SECONDS — an epoch has no timezone, so a correct client in any zone
-		// produces the same number. Enforcing the format here is what removes the ambiguity;
-		// never hand this to Date.parse(), which would read a zone-less string as server-local time.
-		// 10 digits = seconds, 13 = milliseconds (what Date.now() gives). The two ranges cannot be
-		// confused: both cover years 2001-2286, so the digit count alone tells them apart.
-		// NOTE: only the WINDOW CHECK normalizes to seconds — the signature below must keep using
-		// the exact string the client sent, or every ms-based client would fail verification.
-		if (!/^\d{10}$/.test(params.ts) && !/^\d{13}$/.test(params.ts))
-			throw { ...DefaultErrors.UNAUTHORIZED, details: "ts must be Unix epoch seconds (10 digits) or milliseconds (13 digits), UTC" }
+		// `ts` is Unix epoch milliseconds (what Date.now() gives): an epoch has no timezone, so a
+		// correct client in any zone produces the same number. One format only: never hand this to
+		// Date.parse(), which would read a zone-less string as server-local time.
+		if (!/^\d{13}$/.test(params.ts))
+			throw { ...DefaultErrors.UNAUTHORIZED, details: "ts must be Unix epoch milliseconds (13 digits), UTC" }
 
 		const nowMs = Date.now();
 		const nowSec = Math.floor(nowMs / 1000);
-		const tsSec = params.ts.length === 13
-			? Math.floor(parseInt(params.ts, 10) / 1000)
-			: parseInt(params.ts, 10);
+		const tsSec = Math.floor(parseInt(params.ts, 10) / 1000);
 		const delta = tsSec - nowSec;   // >0 — client is ahead of us
 		if (delta < -InterceptorPayAuth.TS_PAST_SEC || delta > InterceptorPayAuth.TS_FUTURE_SEC)
 			// The delta is deliberately echoed back: ts is the caller's own value, so nothing is
@@ -138,7 +138,8 @@ export class InterceptorPayAuth implements IInterceptor<any> {
 
 					if (b64) {
 						const key = Buffer.from(i.key, "hex")
-						const sig = crypto.createHmac("sha256", key).update(b64 + params.ts + params.nonce).digest("hex")
+						const message = InterceptorPayAuth.message(String(req.method ?? "").toUpperCase(), InterceptorPayAuth.pathOf(req), params.kid, params.ts, params.nonce, b64);
+						const sig = crypto.createHmac("sha256", key).update(message).digest("hex")
 						// Constant-time compare: a plain === leaks, through response timing, how
 						// many leading characters of a guess were right. Length is not secret, so
 						// checking it first (timingSafeEqual throws on unequal lengths) is fine.
@@ -163,5 +164,29 @@ export class InterceptorPayAuth implements IInterceptor<any> {
 		}
 
 		throw { ...DefaultErrors.UNAUTHORIZED, details: "Key not found" }
+	}
+
+	static message(method: string, path: string, kid: string, ts: string, nonce: string, b64: string): string {
+		return [VERSION, method, path, kid, ts, nonce, b64].join("\n");
+	}
+
+	private static pathOf(req: IRequest): string {
+		const raw: any = req.raw ?? {};
+		const url = String(raw.originalUrl ?? raw.url ?? req.endpoint ?? "");
+		try { return new URL(url, "http://localhost").pathname; } catch { return url; }
+	}
+
+	/**
+	 * Client side: the Authorization header and the `b64` field for one request. `key` is the shared
+	 * key in hex, `data` the request body; send it as { b64 }.
+	 */
+	static sign(o: { key: string, kid: string, method: string, url: string, data: unknown, nonce?: string }): { authorization: string, b64: string } {
+		const b64 = Buffer.from(JSON.stringify(o.data ?? {}), "utf-8").toString("base64");
+		const ts = String(Date.now());
+		const nonce = o.nonce ?? crypto.randomBytes(18).toString("base64url");
+		const path = new URL(o.url, "http://localhost").pathname;
+		const message = InterceptorPayAuth.message(o.method.toUpperCase(), path, o.kid, ts, nonce, b64);
+		const sig = crypto.createHmac("sha256", Buffer.from(o.key, "hex")).update(message).digest("hex");
+		return { authorization: `PayAuth v=1, ts=${ts}, nonce=${nonce}, kid=${o.kid}, alg=hmac-sha256, sig=${sig}`, b64 };
 	}
 }
