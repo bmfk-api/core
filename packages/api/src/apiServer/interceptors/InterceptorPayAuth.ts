@@ -19,8 +19,8 @@ type TAuthParams = ValidationModel<typeof _TAuthParams>
 
 // The signed message, one field per line:
 //   bmfk-payauth-v1 · METHOD · URL path · kid · ts · nonce · b64
-// Separators keep one field from sliding into the next (a glued "ts+nonce" lets ts digits move into
-// the nonce with the same signature), and method, path and kid bind the request to its endpoint.
+// Separators make the message unambiguous, and method, path and kid bind the request to its endpoint
+// and key.
 const VERSION = "bmfk-payauth-v1";
 
 

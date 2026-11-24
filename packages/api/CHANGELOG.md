@@ -4,10 +4,8 @@
 
 ### Security
 
-- `InterceptorPayAuth`: a captured request could be replayed with a new nonce, or sent to another
-  endpoint. The signature covered `b64 + ts + nonce` glued together, and `ts` could have 10 or 13
-  digits, so the last three digits of a millisecond `ts` could move into the nonce without changing
-  the signature. **Breaking:** the signed message is now
+- `InterceptorPayAuth`: the signed message was ambiguous, so a captured request could be reused, and it
+  was not bound to one endpoint. **Breaking:** the signed message is now
   `bmfk-payauth-v1 · METHOD · path · kid · ts · nonce · b64`, one per line, and `ts` must be epoch
   milliseconds (13 digits). `InterceptorPayAuth.sign()` builds the header for a client.
 
