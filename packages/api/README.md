@@ -188,7 +188,8 @@ nonce replay protection:
 
 - **`InterceptorPayAuth`** uses an HMAC-SHA256 signature with a shared key. The signature covers
   the method, path, key id, timestamp (epoch milliseconds), nonce and body;
-  `InterceptorPayAuth.sign()` builds the header and the `b64` field for a client.
+  `InterceptorPayAuth.sign()` builds the header and the `b64` field for a client. A key is hex, at
+  least 16 bytes: `crypto.randomBytes(32).toString("hex")`.
 - **`InterceptorSignedAuth`** uses Ed25519 key pairs. The caller keeps the private key, and the
   server stores only public keys, so nothing on the server can be stolen and reused. The signature
   covers the method, path, timestamp, nonce, every field and the sha256 of every uploaded file.

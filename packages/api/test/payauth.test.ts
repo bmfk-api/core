@@ -20,6 +20,22 @@ async function refused(p: Promise<unknown>): Promise<string> {
     assert.fail("request was accepted");
 }
 
+test("a key that isn't hex fails at construction", () => {
+    assert.throws(() => new InterceptorPayAuth([{ kid: "k", key: "ABEiM0RVZneImaq7zN3u/w==" }]), /"k".*hex/);
+});
+
+test("a key shorter than 16 bytes fails at construction, an empty one too", () => {
+    assert.throws(() => new InterceptorPayAuth([{ kid: "k", key: "00112233445566778899aabbccddee" }]), /16 bytes/);
+    assert.throws(() => new InterceptorPayAuth([{ kid: "k", key: "" }]), /16 bytes/);
+});
+
+test("a key that isn't hex, given per call, refuses the request instead of signing with an empty key", async () => {
+    // Buffer.from(<base64>, "hex") is empty: a signature made with an empty key must not pass.
+    const forged = InterceptorPayAuth.sign({ key: "", kid: "k", method: "POST", url: PATH, data: { amount: 100 } });
+    const p = new InterceptorPayAuth().intercept(request(forged.authorization, forged.b64), [{ kid: "k", key: "ABEiM0RVZneImaq7zN3u/w==" }]);
+    assert.match(await refused(p), /key/i);
+});
+
 test("the old glued message (b64 + ts + nonce) is refused", async () => {
     const b64 = b64Of({ amount: 100 }), ts = String(Date.now()), nonce = "n".repeat(16);
     assert.match(await refused(auth().intercept(request(header(ts, nonce, hmac(b64 + ts + nonce)), b64))), /Signature mismatch/);

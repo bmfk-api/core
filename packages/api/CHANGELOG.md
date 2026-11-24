@@ -10,6 +10,10 @@
   the signature. **Breaking:** the signed message is now
   `bmfk-payauth-v1 · METHOD · path · kid · ts · nonce · b64`, one per line, and `ts` must be epoch
   milliseconds (13 digits). `InterceptorPayAuth.sign()` builds the header for a client.
+- `InterceptorPayAuth`: a key that wasn't hex (base64, for example) was silently decoded to a few bytes
+  or to an empty key, and with an empty key anyone could sign. A key must now be hex, at least 16 bytes
+  (32 characters): the constructor throws otherwise, and a bad key passed per call refuses the request
+  and is logged.
 
 ## 1.0.1 — 2026-11-24
 

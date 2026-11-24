@@ -4,6 +4,7 @@ import { IInterceptor } from "../APIService";
 import { ValidationModel, Validator } from "../helper/Validator";
 import DefaultErrors from "../structures/DefaultErrors";
 import { IRequest } from "../structures/Interfaces";
+import { logError } from "../LogService";
 
 
 const _TAuthParams = {
@@ -42,7 +43,21 @@ export class InterceptorPayAuth implements IInterceptor<any> {
 
 	private authorizationsPreset:{key:string,kid:string}[]|null|undefined;
 	constructor(authorizations?:{key:string,kid:string}[]) {
+		for (const a of authorizations ?? []) {
+			const problem = InterceptorPayAuth.keyProblem(a.key);
+			if (problem) throw new Error(`InterceptorPayAuth: key of "${a.kid}" ${problem}`);
+		}
 		this.authorizationsPreset = authorizations;
+	}
+
+	// Buffer.from(key, "hex") silently stops at the first non-hex character: a base64 key turns
+	// into a few bytes or none at all, and an empty HMAC key lets anyone sign.
+	private static keyProblem(key: unknown): string | null {
+		if (typeof key !== "string" || !/^[0-9a-fA-F]*$/.test(key) || key.length % 2 !== 0)
+			return "must be hex";
+		if (key.length < 32)
+			return "must be at least 16 bytes (32 hex characters)";
+		return null;
 	}
 
 	// Every entry gets the SAME ttl, so insertion order equals expiry order and we can stop at the
@@ -137,6 +152,12 @@ export class InterceptorPayAuth implements IInterceptor<any> {
 				if (params.alg && params.alg.toLowerCase() === "hmac-sha256") {
 
 					if (b64) {
+						// Keys given per call skip the constructor's check.
+						const problem = InterceptorPayAuth.keyProblem(i.key);
+						if (problem) {
+							logError(`InterceptorPayAuth: key of "${i.kid}" ${problem} — request refused`);
+							throw { ...DefaultErrors.UNAUTHORIZED, details: "Key not usable" }
+						}
 						const key = Buffer.from(i.key, "hex")
 						const message = InterceptorPayAuth.message(String(req.method ?? "").toUpperCase(), InterceptorPayAuth.pathOf(req), params.kid, params.ts, params.nonce, b64);
 						const sig = crypto.createHmac("sha256", key).update(message).digest("hex")
