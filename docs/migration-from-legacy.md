@@ -140,6 +140,32 @@ every number sample without `min`/`max`, per endpoint.
 For example, `priority: 100, $__priority_max: 1000` is listed: 6.x allowed at most 100, 1.0 as written
 allows at most 1000. Decide which one you meant.
 
+## Database fields: options only through `dbField()`
+
+6.x read any object in `REQ_DB` `fields` shaped like `{ value, system: true, … }` as field options, and
+`system: true` put `value` into the SQL as is. Request data can be shaped like that, so a handler that
+passed `req.data` into `fields` let the client write SQL. In 1.0 options come only from `dbField()`:
+
+```ts
+import { REQ_DB, dbField } from "@bmfk/api";
+
+await REQ_DB.request({
+  query: "UPDATE users SET @onupdate WHERE id = @id",
+  fields: { id: dbField(id, { ignoreInUpdate: true }), name, updated: dbField("NOW()", { system: true }) },
+});
+```
+
+Any other object or array is a value, stored as escaped JSON. A plain object with `value` and only option
+keys (`system`, `ignoreInInsert`, `ignoreInUpdate`, `useInReplace`, `fields`, `name`) fails with an error
+that names the field, so old code stops loudly instead of writing `{"value":"NOW()",…}` into the column.
+To store such an object as JSON on purpose, pass `JSON.stringify(it)`.
+
+`bmfk migrate` rewrites these literals: `{ value: X, system: true, … }` → `dbField(X, { system: true, … })`
+anywhere, and `{ value: X }` inside `REQ_DB.request({ query, fields: { … } })`, and adds `dbField` to the
+`@bmfk/api` import. Options built at run time (`f[name] = { value, system }` from a variable, a spread) need
+`dbField()` by hand; the error at the first query names the field. Nested `fields` (`@name` inside a value)
+now fill only a raw fragment (`system: true`) and take `0`, `""`, `false` and `null` too.
+
 ## API documentation: real sign-in
 
 6.x documentation users had plain-text passwords in `access.json` and the page sent a never-expiring

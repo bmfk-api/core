@@ -620,7 +620,9 @@ export class Validator {
 
 		
 		for (let key of Object.keys(object)) {
-			if (!(key in structure)) {
+			// Own keys only: `in` also finds "constructor", "toString", … on Object.prototype, and
+			// those would pass into the request data unchecked.
+			if (!Object.hasOwn(structure, key)) {
 				delete object[key];
 				continue;
 			}

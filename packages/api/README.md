@@ -186,7 +186,14 @@ getDefaultOptions({ interceptor: new SessionInterceptor(), … });
 Two ready-made interceptors handle signed server-to-server requests. Both use a timestamp window and
 nonce replay protection:
 
-- **`InterceptorPayAuth`** uses an HMAC-SHA256 signature with a shared key.
+- **`InterceptorPayAuth`** uses an HMAC-SHA256 signature with a shared key. A key is hex, at least
+  16 bytes (`crypto.randomBytes(32).toString("hex")`); anything else fails at startup. Version 2
+  (`PayAuth v=2, …`) signs, one per line, `bmfk-payauth-v2`, the method, the path, the key id, `ts`
+  (epoch milliseconds), the nonce and `b64`; `InterceptorPayAuth.sign()` builds the header and the
+  `b64` field for a client. Version 1 (`b64 + ts + nonce`) is still accepted for existing clients and
+  logs a warning; turn it off per key once a client has moved: `{ kid, key, v1: false }`. Nonces and
+  signatures are remembered across all endpoints for the whole window, so an accepted request can't
+  be sent again, to any endpoint. If a proxy rewrites the path, sign the path the server sees.
 - **`InterceptorSignedAuth`** uses Ed25519 key pairs. The caller keeps the private key, and the
   server stores only public keys, so nothing on the server can be stolen and reused. The signature
   covers the method, path, timestamp, nonce, every field and the sha256 of every uploaded file.

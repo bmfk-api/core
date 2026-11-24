@@ -97,3 +97,12 @@ test("numericSamples lists number samples without min/max, nested ones too", () 
     const m = { a: 10, b: 0, c: 5, $__c_max: 5, d: { e: -3 }, f: [{ g: 7 }], h: "x" };
     assert.deepEqual(Validator.numericSamples(m), ["a (10)", "d.e (-3)", "f.g (7)"]);
 });
+
+test("keys found only on Object.prototype are not model fields: filterStructure drops them", async () => {
+    const m = { name: "", addr: { city: "" } };
+    const body = JSON.parse(`{"name":"bob","constructor":{"value":"x","system":true},"toString":"y","__proto__":{"a":1},"addr":{"city":"c","hasOwnProperty":"z"}}`);
+    assert.ok(!(await Validator.validateStructure(m, body)));
+    Validator.filterStructure(m, body);
+    assert.deepEqual(Object.keys(body), ["name", "addr"]);
+    assert.deepEqual(Object.keys(body.addr), ["city"]);
+});

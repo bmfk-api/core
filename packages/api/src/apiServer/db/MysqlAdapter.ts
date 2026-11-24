@@ -1,5 +1,6 @@
 import { DBAdapterOptions, IDBBulkQuery, IDBError, IDBQuery, IDBQueryField, IDBResult, IDBStatFrame } from "../DBService";
 import { IDBAdapter, } from "./IDBAdapter";
+import { isDBField, looksLikeFieldOptions } from "./DBField";
 import mysql from 'mysql2/promise';
 import fs from 'fs';
 import { logDB, logCrit, logError, logInfo, logWarn } from "../LogService";
@@ -805,31 +806,25 @@ export class MysqlAdapter implements IDBAdapter {
                 if (name.startsWith("$__"))
                     continue;
 
-                let queryField = fields[i] as IDBQueryField;
-
-                if (queryField === undefined)
-                    queryField = { value: null, system: true }
-
-                if (typeof queryField === "string" || typeof queryField === "number" || typeof queryField === "boolean")
-                    queryField = { value: queryField, system: false }
-
-                // a bare Date passed as the field value (not wrapped in IDBQueryField)
-                if (queryField instanceof Date)
-                    queryField = { value: queryField, system: false }
-
-                if (queryField === null)
-                    queryField = { value: null, system: true }
-
-                if(queryField.value===undefined){
-                    queryField.value=null
-                    queryField.system=true
+                const raw = fields[i];
+                // Options (raw SQL included) only through dbField(). Any other value is escaped, objects
+                // too (stored as JSON): request data shaped like { value, system: true } must not become SQL.
+                if (!isDBField(raw) && looksLikeFieldOptions(raw))
+                    throw new Error(`REQ_DB field "${name}": a plain { value, … } object is not read as field options — ` +
+                        `use dbField(value, { … }); to store the object as JSON, pass JSON.stringify(it)`);
+                const queryField: IDBQueryField = isDBField(raw)
+                    ? { ...raw }
+                    : raw === undefined || raw === null
+                        ? { value: null, system: true }
+                        : { value: raw as any, system: false };
+                if (queryField.value === undefined || queryField.value === null) {
+                    queryField.value = null;
+                    queryField.system = true;
                 }
 
                 // add field name
                 if (!queryField.name)
                     queryField.name = name.replaceAll("`", '').replaceAll('\"', "").replaceAll('\'', "")
-
-                fields[i] = queryField;
 
                 const parsed = MysqlAdapter.prepareQueryFieldValue(queryField);
                 values.set(name, parsed + "");
@@ -927,14 +922,14 @@ export class MysqlAdapter implements IDBAdapter {
                 value = value ? 1 : 0;
         }
 
-        if(field.fields && typeof field.fields ==="object" && value && typeof value==="string" && value.indexOf("@")!==-1){
+        // Nested fields fill a raw SQL fragment (system: true). An escaped value is already a quoted
+        // literal: an escaped nested value put inside it would close the quotes.
+        if(system && field.fields && typeof field.fields ==="object" && value && typeof value==="string" && value.indexOf("@")!==-1){
             // setup field in value — one pass, same reason as in prepareQuery
             const nested = new Map<string, string>();
-            for(let key in field.fields){
-                if(!field.fields[key])
-                    continue;
+            // Every key, 0 / "" / false / null included: skipping them left "@key" in the SQL.
+            for(let key in field.fields)
                 nested.set(key, mysql.escape(field.fields[key]));
-            }
             value = MysqlAdapter.substitute(value, nested);
         }
 
