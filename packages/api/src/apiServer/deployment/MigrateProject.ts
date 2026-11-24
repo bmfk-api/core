@@ -6,7 +6,8 @@ import { palette } from "./cliCommon";
 //   package.json  legacy dependency → @bmfk/api, the legacy signal package dropped,
 //                 legacy CLI scripts and `node -e 'require(<legacy>).Deploy(…)'` → `bmfk …`
 //   source files  every import/require of the legacy package (root or dist/…) and its signal package → @bmfk/api;
-//                 number samples in validation models, which 6.x took as bounds, → 0 + $__X_max / $__X_min
+//                 number samples in validation models, which 6.x took as bounds, → 0 + $__X_max / $__X_min;
+//                 REQ_DB field options written as { value, system: true, … } → dbField(value, { system: true, … })
 // and lists what it can't change by itself: names 1.0 no longer exports, shared-key microservices, …
 // Without --write it only shows the plan.
 
@@ -257,10 +258,73 @@ export function migrateModels(text: string, rel: string, ts: TS): { text: string
     return { text: out, changes: edits.length / 2, notes };
 }
 
+const FIELD_OPTION_KEYS = new Set(["value", "name", "system", "ignoreInInsert", "ignoreInUpdate", "useInReplace", "fields", "__parsedValue"]);
+const FIELD_OPTION_MARKERS = ["system", "ignoreInInsert", "ignoreInUpdate", "useInReplace", "fields"];
+
+/**
+ * REQ_DB field options: a plain `{ value, system: true, … }` is no longer read as options (request data
+ * could be shaped like it), only `dbField(value, { … })`. Rewrites every object literal with `value` and
+ * only option keys — when it has an option besides `name`, or is a property of a `fields: { … }` literal —
+ * and adds dbField to the @bmfk/api import.
+ */
+export function migrateFieldOptions(text: string, rel: string, ts: TS): { text: string; changes: number; notes: string[] } {
+    const kind = /\.(tsx|jsx)$/.test(rel) ? ts.ScriptKind.TSX : /\.(js|mjs|cjs)$/.test(rel) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+    const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, kind);
+    const notes: string[] = [];
+    const edits: { at: number; end: number; text: string }[] = [];
+    const nameOf = (n: TSNode) => ts.isIdentifier(n) || ts.isStringLiteral(n) || ts.isNumericLiteral(n) ? n.text : null;
+    // `{ value }` alone is common outside SQL (forms, options): only inside `{ query, fields: { … } }`.
+    const inFieldsLiteral = (obj: TSNode) => {
+        const prop = obj.parent;
+        const owner = prop && ts.isPropertyAssignment(prop) ? prop.parent : null;
+        const holder = owner && ts.isObjectLiteralExpression(owner) ? owner.parent : null;
+        if (!holder || !ts.isPropertyAssignment(holder) || nameOf(holder.name) !== "fields") return false;
+        return holder.parent.properties.some((p: TSNode) => p.name && nameOf(p.name) === "query");
+    };
+
+    const visit = (node: TSNode) => {
+        if (ts.isObjectLiteralExpression(node) && node.properties.length) {
+            const props = node.properties;
+            const names = props.map((p: TSNode) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) ? nameOf(p.name) : null);
+            if (names.every((n: string | null) => n !== null && FIELD_OPTION_KEYS.has(n)) && names.includes("value")
+                && (names.some((n: string) => FIELD_OPTION_MARKERS.includes(n)) || inFieldsLiteral(node))) {
+                const valueProp = props[names.indexOf("value")];
+                const valueText = ts.isShorthandPropertyAssignment(valueProp) ? "value" : valueProp.initializer.getText(sf);
+                const rest = props.filter((p: TSNode) => p !== valueProp && nameOf(p.name) !== "__parsedValue").map((p: TSNode) => p.getText(sf));
+                edits.push({ at: node.getStart(sf), end: node.getEnd(), text: `dbField(${valueText}${rest.length ? `, { ${rest.join(", ")} }` : ""})` });
+                return;   // a descriptor holds no other descriptor
+            }
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    if (!edits.length) return { text, changes: 0, notes };
+
+    let out = text;
+    for (const e of edits.sort((a, b) => b.at - a.at)) out = out.slice(0, e.at) + e.text + out.slice(e.end);
+
+    // dbField into the @bmfk/api import (the legacy one is rewritten before this runs).
+    const named = /import\s+\{([^}]*)\}\s+from\s+(["'])@bmfk\/api\2/.exec(out);
+    if (named && /\bdbField\b/.test(named[1])) {
+        // already imported
+    } else if (named) {
+        const open = out.indexOf("{", named.index), close = out.indexOf("}", open);
+        const inner = out.slice(open + 1, close).replace(/[\s,]*$/, "");
+        out = out.slice(0, open + 1) + `${inner}, dbField ` + out.slice(close);
+    } else if (sf.statements.some((s: TSNode) => ts.isImportDeclaration(s))) {
+        const last = [...sf.statements].reverse().find((s: TSNode) => ts.isImportDeclaration(s));
+        const at = out.indexOf(last.getText(sf)) + last.getText(sf).length;
+        out = out.slice(0, at) + `\nimport { dbField } from "${NEW_PKG}";` + out.slice(at);
+    } else {
+        notes.push(`${rel} — dbField() is used now: add it to the ${NEW_PKG} require/import`);
+    }
+    return { text: out, changes: edits.length, notes };
+}
+
 export function planMigration(dir: string, exported: Set<string>): IMigrationPlan {
     const plan: IMigrationPlan = { files: [], notes: [] };
     const ts = projectTypeScript(dir);
-    if (!ts) plan.notes.push(`validation models were NOT checked: this needs TypeScript 5 in the project — run \`npm i -D typescript@5\` and migrate again (at startup the service also lists number samples that 6.x took as bounds)`);
+    if (!ts) plan.notes.push(`validation models and REQ_DB field options were NOT checked: this needs TypeScript 5 in the project — run \`npm i -D typescript@5\` and migrate again (at startup the service also lists number samples that 6.x took as bounds)`);
     const pkgFile = path.join(dir, "package.json");
     if (fs.existsSync(pkgFile)) {
         const before = fs.readFileSync(pkgFile, "utf-8");
@@ -281,6 +345,11 @@ export function planMigration(dir: string, exported: Set<string>): IMigrationPla
             const r = migrateSource(text, rel, exported);
             text = r.text; changes += r.changes;
             plan.notes.push(...r.notes);
+        }
+        if (ts && /\bvalue\b/.test(text) && /\b(system|ignoreInInsert|ignoreInUpdate|useInReplace|fields)\b/.test(text)) {
+            const f = migrateFieldOptions(text, rel, ts);
+            text = f.text; changes += f.changes;
+            plan.notes.push(...f.notes);
         }
         if (changes) plan.files.push({ file, before, after: text, changes });
     }
@@ -311,6 +380,8 @@ export async function MigrateProject(args: string[]): Promise<void> {
     console.log(bold("\nAlso check:"));
     console.log("  - MySQL values starting with \"_\" (host, user, database, password) were decrypted by 6.x; 1.0 uses them as written.");
     console.log("  - Services that call each other move to 1.0 together: 6.x and 1.0 can't call each other.");
+    console.log("  - REQ_DB field options built at run time (not written as { value, system: … } in the code) need dbField() by hand;");
+    console.log("    a plain { value, … } object now fails with an error that names the field.");
     console.log("  - Deploy with a 1.0 deployer: copy setup.json, the project configs and <project>_state_.json into its folders.");
     console.log("  - Node.js 24 or later on the servers.");
 

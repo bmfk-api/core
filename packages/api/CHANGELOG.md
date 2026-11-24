@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.1.0 — 2026-11-24
+
+Security fixes reported by @sorokin-vladimir in #2–#5, reworked so existing PayAuth clients keep working.
+
+### Security
+
+- `InterceptorPayAuth` **v2** (`PayAuth v=2`): the signed message is `bmfk-payauth-v2`, method, path, key id,
+  `ts` (epoch milliseconds only), nonce and `b64`, one per line, so a request is bound to its endpoint and key.
+  `InterceptorPayAuth.sign()` builds the header and `b64` for a client.
+- `InterceptorPayAuth` **v1** stays as it was for clients (`b64 + ts + nonce`, `ts` in seconds or
+  milliseconds), with the replay fixed on the server: digits moved from the end of `ts` to the start of the
+  nonce gave a new nonce with the same signature. Signatures are now remembered with nonces, for the whole
+  window, across every endpoint. A key that signs with v1 is logged once; `{ kid, key, v1: false }` turns
+  v1 off for that key.
+- `InterceptorPayAuth`: a key that isn't hex, or is shorter than 16 bytes, fails at startup (a per-call
+  key refuses the request). A non-hex key used to be decoded to a few bytes or to an empty key, and with an
+  empty key anyone could sign.
+- `REQ_DB` fields: options (raw SQL with `system: true`, `ignoreInUpdate`, …) come only from the new
+  `dbField(value, options)`. A plain `{ value, system: true }` from request data was put into the SQL as is.
+  **Breaking:** a plain object with `value` and only option keys now fails with an error naming the field;
+  any other object or array is stored as escaped JSON. `bmfk migrate` rewrites such literals to `dbField()`.
+- `REQ_DB` nested `fields` (`@name` inside a value) fill only a raw fragment (`system: true`): inside an
+  escaped value they could close its quotes. `0`, `""`, `false` and `null` are filled in too; they were
+  skipped and left `@name` in the SQL.
+- Validation: only the model's own keys are fields. `constructor`, `toString` and other `Object.prototype`
+  names passed into the request data unchecked.
+
 ## 1.0.1 — 2026-11-24
 
 ### Release process

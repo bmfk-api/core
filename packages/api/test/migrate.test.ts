@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "path";
-import { migrateSource, migratePackageJson, rootExportNames, migrateModels, projectTypeScript } from "../src/apiServer/deployment/MigrateProject";
+import { migrateSource, migratePackageJson, rootExportNames, migrateModels, migrateFieldOptions, projectTypeScript } from "../src/apiServer/deployment/MigrateProject";
 
 const exported = rootExportNames(path.join(__dirname, "..", "..", "src", "index.ts"));
 
@@ -99,4 +99,44 @@ test("validation models: number samples become 0 plus an explicit bound", () => 
     ].join("\n"));
     assert.equal(r.notes.length, 1);
     assert.match(r.notes[0], /a\.ts:1 .*"amount: 1000" also has min\/max/);
+});
+
+test("REQ_DB field options: { value, system, … } literals become dbField(), and dbField is imported", () => {
+    const src = [
+        `import { REQ_DB, logInfo } from "@bmfk/api";`,
+        `await REQ_DB.request({ query: "UPDATE t SET @onupdate WHERE id = @id", fields: {`,
+        `    id: { value: id, ignoreInUpdate: true },`,
+        `    updated: { value: "NOW()", system: true },`,
+        `    full: { value: "CONCAT(@a, @b)", system: true, fields: { a, b } },`,
+        `    plain: { value: 5 },`,
+        `    name,`,
+        `} });`,
+        `const f: any = {}; f.at = { value, system: true };`,
+        `const option = { value: 1, label: "One" };`,
+        `const form = { fields: { email: { value: "" } } };`,
+    ].join("\n");
+    const r = migrateFieldOptions(src, "a.ts", ts5);
+    assert.equal(r.text, [
+        `import { REQ_DB, logInfo, dbField } from "@bmfk/api";`,
+        `await REQ_DB.request({ query: "UPDATE t SET @onupdate WHERE id = @id", fields: {`,
+        `    id: dbField(id, { ignoreInUpdate: true }),`,
+        `    updated: dbField("NOW()", { system: true }),`,
+        `    full: dbField("CONCAT(@a, @b)", { system: true, fields: { a, b } }),`,
+        `    plain: dbField(5),`,
+        `    name,`,
+        `} });`,
+        `const f: any = {}; f.at = dbField(value, { system: true });`,
+        `const option = { value: 1, label: "One" };`,
+        `const form = { fields: { email: { value: "" } } };`,
+    ].join("\n"));
+    assert.equal(r.changes, 5);
+});
+
+test("REQ_DB field options: an import is added when the file has none from @bmfk/api, and kept when it has dbField", () => {
+    const added = migrateFieldOptions(`import x from "./x";\nconst q = { value: 1, system: true };`, "a.ts", ts5);
+    assert.equal(added.text, `import x from "./x";\nimport { dbField } from "@bmfk/api";\nconst q = dbField(1, { system: true });`);
+    const kept = migrateFieldOptions(`import { dbField, REQ_DB } from "@bmfk/api";\nconst q = { value: 1, system: true };`, "a.ts", ts5);
+    assert.equal(kept.text, `import { dbField, REQ_DB } from "@bmfk/api";\nconst q = dbField(1, { system: true });`);
+    const cjs = migrateFieldOptions(`const { REQ_DB } = require("@bmfk/api");\nconst q = { value: 1, system: true };`, "a.js", ts5);
+    assert.match(cjs.notes[0], /add it to the @bmfk\/api require/);
 });

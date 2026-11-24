@@ -20,6 +20,7 @@ export type { TValidatorType, IStructureOptions, IValidatorOptions } from "./api
 export { InterceptorSignedAuth } from "./apiServer/interceptors/InterceptorSignedAuth";
 export type { ISignedAuthResult, ISignedAuthVerdict } from "./apiServer/interceptors/InterceptorSignedAuth";
 export { InterceptorPayAuth } from "./apiServer/interceptors/InterceptorPayAuth";
+export type { IPayAuthKey } from "./apiServer/interceptors/InterceptorPayAuth";
 
 // Logging and tracing
 export { LogService, LOG_LEVEL, getDefaultLogOptions, logInfo, logWarn, logError, logCrit, logDB, logAPI, S_LOG, REQ_LOG } from "./apiServer/LogService";
@@ -27,8 +28,8 @@ export type { ILogItem, ILogServiceOptions } from "./apiServer/LogService";
 export { Trace, TRACE_HEADER } from "./apiServer/helper/Trace";
 
 // Database
-export { DBService, REQ_DB, REQ_DBX, REQ_DB_TBEGIN, REQ_DB_TCOMMIT, REQ_DB_TROLLBACK } from "./apiServer/DBService";
-export type { IDBQuery, IDBQueryField, IDBQueryFields, IDBBulkQuery, IDBBulkQueryItem, IDBError, IDBResult, IDBSericeOptions, DBAdapterOptions } from "./apiServer/DBService";
+export { DBService, REQ_DB, REQ_DBX, REQ_DB_TBEGIN, REQ_DB_TCOMMIT, REQ_DB_TROLLBACK, dbField } from "./apiServer/DBService";
+export type { IDBQuery, IDBQueryField, IDBQueryFields, IDBField, IDBBulkQuery, IDBBulkQueryItem, IDBError, IDBResult, IDBSericeOptions, DBAdapterOptions } from "./apiServer/DBService";
 export { MysqlAdapter, isError as isDBError } from "./apiServer/db/MysqlAdapter";
 export { PostgresAdapter } from "./apiServer/db/PostgresAdapter";
 export type { IDBAdapter } from "./apiServer/db/IDBAdapter";
