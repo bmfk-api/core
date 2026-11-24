@@ -8,10 +8,12 @@ function systemTheme(): Theme {
 }
 
 // The chosen theme is remembered; without a choice the page follows the system setting.
+// Known only in the browser: the prerendered page and the first client pass render no icon.
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(() => (document.documentElement.dataset.theme as Theme) || systemTheme());
+  const [theme, setTheme] = useState<Theme | null>(null);
 
   useEffect(() => {
+    setTheme((document.documentElement.dataset.theme as Theme) || systemTheme());
     if (document.documentElement.dataset.theme) return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const on = () => setTheme(mq.matches ? "dark" : "light");
@@ -28,7 +30,7 @@ export function ThemeToggle() {
 
   return (
     <button className="icon-btn" onClick={toggle} aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
-      {theme === "dark" ? <IconSun /> : <IconMoon />}
+      {theme === "dark" ? <IconSun /> : theme === "light" ? <IconMoon /> : null}
     </button>
   );
 }

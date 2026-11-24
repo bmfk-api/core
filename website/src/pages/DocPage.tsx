@@ -1,6 +1,6 @@
 import { useEffect, useState, type ComponentType } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { docs, groups, loadDoc } from "../docs/nav";
+import { docs, groups, loadDoc, loadedDoc } from "../docs/nav";
 import { mdxComponents } from "../components/mdx";
 import { Toc } from "../components/Toc";
 import { NotFound } from "./NotFound";
@@ -9,7 +9,10 @@ import { site } from "../site";
 export function DocPage() {
   const { slug = "" } = useParams();
   const { hash } = useLocation();
-  const [Content, setContent] = useState<{ slug: string, C: ComponentType<any> } | null>(null);
+  const [Content, setContent] = useState<{ slug: string, C: ComponentType<any> } | null>(() => {
+    const C = loadedDoc(slug);
+    return C ? { slug, C } : null;
+  });
 
   const index = docs.findIndex(d => d.slug === slug);
   const doc = docs[index];
@@ -17,7 +20,9 @@ export function DocPage() {
 
   useEffect(() => {
     let alive = true;
-    loadDoc(slug)?.then(m => { if (alive) setContent({ slug, C: m.default }); });
+    const C = loadedDoc(slug);
+    if (C) setContent(c => c?.C === C ? c : { slug, C });
+    else loadDoc(slug)?.then(m => { if (alive) setContent({ slug, C: m.default }); });
     return () => { alive = false; };
   }, [slug]);
 

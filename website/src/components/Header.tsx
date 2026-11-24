@@ -7,8 +7,10 @@ import { SearchDialog } from "./SearchDialog";
 
 export function Header() {
   const [searchOpen, setSearchOpen] = useState(false);
+  const [mac, setMac] = useState(false);
 
   useEffect(() => {
+    setMac(/Mac|iPhone|iPad/.test(navigator.platform));
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setSearchOpen(o => !o); }
       else if (e.key === "/" && !/^(INPUT|TEXTAREA)$/.test((e.target as HTMLElement).tagName)) { e.preventDefault(); setSearchOpen(true); }
@@ -16,8 +18,6 @@ export function Header() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
   return (
     <header className="header">
