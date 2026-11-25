@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.1.1 — 2026-11-25
+
+Fixes from a security review of 1.1.0.
+
+### Security
+
+- `InterceptorPayAuth`: the result (`req.interceptorResult`, which the request log records) no longer
+  contains the shared key — everything of the key entry but `key`. The log masks fields named `key`,
+  `secretKey`, `hmacKey`, `sharedKey`, `signingKey` too. If PayAuth ran with real keys and the request log
+  was on, replace those keys: they could be read in the monitor's log by the `it` and `admin` roles.
+- `InterceptorSignedAuth`: two copies of one request checked at the same time could both pass (the nonce
+  was recorded after the asynchronous checks). A nonce is now held while its check runs, and used nonces
+  are shared by every instance in the process.
+- `InterceptorSignedAuth`: a form field with several files is refused — only one file's hash per field was
+  signed, while the handler got them all. File names and MIME types are not signed: don't trust them.
+- Deploy review: an upload in the moment between the approval and the start of the deploy could replace
+  the approved archive, and the new one was deployed. The project now stays busy from the approval on,
+  and only the archive with the approved hash is deployed.
+- Deploy review: an unreadable or damaged reviewers' 2FA file refuses sign-in (and says so in the log)
+  instead of offering a new enrollment that would overwrite it.
+- API documentation page: served by the API, it signs in only to its own origin; `?host=` (which could send
+  the password and code to another server) is ignored there. The page is sent with a Content-Security-Policy
+  (`connect-src 'self'`).
+- `REQ_DB` with `throwable`: the database's message (tables, constraints, values) no longer goes into the
+  error's `details`, which the client gets; it is logged and kept in the stack (dropped in production).
+- Deploy: `host`, `switch_host` in `deploy.json` and `review_url` in `setup.json` must be https; http only to
+  localhost (an SSH tunnel).
+- Deploy with `secrets`: a config value that would be written into the code (an ES module project, a
+  placeholder outside a quoted string in a CommonJS `.js`/`.cjs`) stops the deploy instead of a warning —
+  it would also land in every backup.
+
 ## 1.1.0 — 2026-11-24
 
 Security fixes reported by @sorokin-vladimir in #2–#5, reworked so existing PayAuth clients keep working.

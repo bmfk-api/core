@@ -154,7 +154,9 @@ export class Documentation extends BaseEndpoint{
             data:this.indexHtmlFile,
             headers:{
                 "Content-Type":"text/html",
-                "Content-Length":Buffer.byteLength(this.indexHtmlFile).toString()
+                "Content-Length":Buffer.byteLength(this.indexHtmlFile).toString(),
+                // The page signs in with password + TOTP: it may talk to its own origin only.
+                "Content-Security-Policy":"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
             }
         }
     }

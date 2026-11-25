@@ -739,13 +739,12 @@ export class MysqlAdapter implements IDBAdapter {
                 this.storeTransactionAsProblem(trx, "error:"+error.errno)
 
             if (request.throwable) {
+                // The driver's message names tables, constraints and values: it goes to the log and
+                // the stack (dropped in production), never into `details`, which the client gets.
                 const base = error.isDuplicateError ? DefaultErrors.DB_DUPLICATE_ERROR : DefaultErrors.DB_ERROR;
                 const customText = error.isDuplicateError ? request.onDuplicateErrorText : request.onErrorText;
-                if (customText) {
-                    // Caller provided a user-facing text — replace the message and skip stack.
-                    throw { ...base, message: customText, details: error.message }
-                }
-                throw { ...base, details: error.message, stack: error }
+                logError(`DB query failed: ${error.message}`);
+                throw { ...base, ...(customText ? { message: customText } : {}), stack: error }
             }
 
             

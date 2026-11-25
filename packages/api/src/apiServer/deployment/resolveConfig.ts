@@ -30,6 +30,17 @@ export interface IDeployerConfig {
     switch_host?: string,  // Activate: explicit /switch URL override
 }
 
+// The token, the archive and review links travel over this address: https, or http to this machine
+// only (an SSH tunnel). Null when it's acceptable.
+export function transportProblem(url: string): string | null {
+    let u: URL;
+    try { u = new URL(url); } catch { return `"${url}" is not a URL`; }
+    if (u.protocol === "https:") return null;
+    const host = u.hostname.replace(/^\[|\]$/g, "");
+    if (u.protocol === "http:" && (host === "localhost" || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host))) return null;
+    return `"${url}" must be https (http only to localhost, e.g. through an SSH tunnel)`;
+}
+
 // Returns null if the config has all required fields and valid optional shapes, otherwise a
 // human-readable reason. Single source of truth for validation — used both to filter the
 // deploy/ folder listing and as the final gate after resolving.
@@ -37,6 +48,12 @@ export function validateConfig(cfg: any): string | null {
     if (!cfg || typeof cfg !== "object") return "not an object";
     if (!cfg.name || !cfg.token || !cfg.host || !cfg.username)
         return "missing one of: name, token, host, username";
+    const insecure = transportProblem(String(cfg.host));
+    if (insecure) return "host: " + insecure;
+    if (cfg.switch_host && typeof cfg.switch_host === "string") {
+        const s = transportProblem(cfg.switch_host);
+        if (s) return "switch_host: " + s;
+    }
     if (!cfg.password && !cfg.privateKey)
         return "missing credentials: privateKey (signed requests) or password";
     if (cfg.privateKey) {
