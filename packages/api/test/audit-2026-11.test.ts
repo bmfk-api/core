@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { InterceptorSignedAuth } from "../src/apiServer/interceptors/InterceptorSignedAuth";
 import { InterceptorPayAuth } from "../src/apiServer/interceptors/InterceptorPayAuth";
-import { LogService } from "../src/apiServer/LogService";
+import { LogService, S_LOG } from "../src/apiServer/LogService";
 import { MysqlAdapter } from "../src/apiServer/db/MysqlAdapter";
 import DefaultErrors from "../src/apiServer/structures/DefaultErrors";
 import { transportProblem, validateConfig } from "../src/apiServer/deployment/resolveConfig";
@@ -13,9 +13,69 @@ import { DeployerService } from "../src/apiServer/deployment/DeployerService";
 import { ReviewAuth } from "../src/apiServer/review/ReviewAuth";
 import { ReviewStore } from "../src/apiServer/deployment/ReviewStore";
 import { REQ_DEPLOYMENT_CONFIG } from "../src/apiServer/deployment/ConfigService";
+import { MonitorAuth } from "../src/apiServer/monitor/MonitorAuth";
+import { FailureCounter } from "../src/apiServer/helper/FailureCounter";
 import crypto from "crypto";
 
 // Fixes from the 2026-11-25 security review of 1.1.0.
+
+test("SQL for statistics and reports: values of sensitive columns and card numbers are masked", () => {
+    const R = "'<REDACTED>'";
+    assert.equal(LogService.sanitizeSql("UPDATE users SET `password` = 'hunter2', `name` = 'bob' WHERE id = 7"),
+        `UPDATE users SET \`password\` = ${R}, \`name\` = 'bob' WHERE id = 7`);
+    assert.equal(LogService.sanitizeSql("SELECT * FROM t WHERE token='abc' AND cvv = 123 AND card_number LIKE '4111%'"),
+        `SELECT * FROM t WHERE token=${R} AND cvv = ${R} AND card_number LIKE ${R}`);
+    assert.equal(LogService.sanitizeSql("INSERT INTO cards (`id`,`pan`,`exp`,`note`) VALUES (1,'4111111111111111','12/29','it''s, ok'),(2,'5500000000000004',NOW(),'x')"),
+        `INSERT INTO cards (\`id\`,\`pan\`,\`exp\`,\`note\`) VALUES (1,${R},${R},'it''s, ok'),(2,${R},${R},'x')`);
+    // A card number anywhere else: by Luhn.
+    assert.ok(!LogService.sanitizeSql("SELECT * FROM t WHERE comment = 'paid with 4111 1111 1111 1111'").includes("4111 1111 1111 1111"));
+    assert.equal(LogService.sanitizeSql("SELECT id FROM t WHERE amount = 100"), "SELECT id FROM t WHERE amount = 100");
+});
+
+test("MySQL statistics keep the masked query", () => {
+    const adapter = new MysqlAdapter({} as any);
+    adapter.collectStat("UPDATE t SET `password` = 'hunter2' WHERE id = 1", 5, false);
+    const shown = JSON.stringify((adapter as any).getOrCreateStatSlot().longestQueries);
+    assert.ok(!shown.includes("hunter2"));
+    assert.ok(shown.includes("<REDACTED>"));
+});
+
+test("monitor: a user without a known role gets no capability", () => {
+    for (const cap of ["dashboard", "logs", "admin"] as const) {
+        assert.equal(MonitorAuth.roleAllows(undefined, cap), false);
+        assert.equal(MonitorAuth.roleAllows("root", cap), false);
+    }
+    assert.deepEqual(MonitorAuth.describeRole(undefined), { role: "none", capabilities: [] });
+    assert.equal(MonitorAuth.roleAllows("analytic", "dashboard"), true);
+    assert.equal(MonitorAuth.roleAllows("analytic", "logs"), false);
+});
+
+test("failed sign-ins: lock after the limit, forget old failures, stay bounded", () => {
+    const c = new FailureCounter(3, 1000, 100);
+    c.fail("a", 0); c.fail("a", 10);
+    assert.equal(c.lockedFor("a", 20), 0);
+    c.fail("a", 20);
+    assert.equal(c.lockedFor("a", 20), 1000);
+    assert.equal(c.lockedFor("a", 1020), 0);
+    // Failures older than the lockout time don't add up.
+    c.fail("b", 0); c.fail("b", 10); c.fail("b", 5000);
+    assert.equal(c.lockedFor("b", 5000), 0);
+    // Random logins can't grow it past the cap; a locked login is kept while unlocked ones go.
+    for (let i = 0; i < 3; i++) c.fail("victim", 6000);
+    for (let i = 0; i < 1000; i++) c.fail("random-" + i, 6001);
+    assert.ok(c.size <= 100);
+    assert.ok(c.lockedFor("victim", 6002) > 0);
+});
+
+test("review journal: an entry that can't be written goes to the log instead of vanishing", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "review-journal-"));
+    fs.writeFileSync(path.join(dir, ".review"), "a file where the folder should be");
+    const lines: string[] = [];
+    const id = S_LOG.subscribe(i => lines.push(String(i.data[0])));
+    try { new ReviewStore(dir).journal("shop", "accept", { reviewer: "lead", sha256: "abc" }); }
+    finally { S_LOG.unsubscribe(id); }
+    assert.ok(lines.some(l => /Review journal of "shop" not written.*"event":"accept".*"sha256":"abc"/.test(l)), lines.join("\n"));
+});
 
 const KEY = "00112233445566778899aabbccddeeff";
 

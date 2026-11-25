@@ -418,6 +418,8 @@ access: {
 monitorAuthDir: "/var/lib/my-service",   // where 2FA enrollments are kept
 ```
 
+- **Every user needs a role.** A user without `role` (or with an unknown one) can sign in but reaches
+  nothing; the service warns about such users when it loads the access file.
 - **Passwords must be stored as hashes.** Generate one with `npx bmfk hash-password`. The command
   asks for the password interactively and prints the config entry. A plain-text password in the config
   is refused.
@@ -1227,6 +1229,7 @@ What has to survive restarts and deploys lives in one folder per project, outsid
 | Option | Default | Description |
 |---|---|---|
 | `port` | `8080` | HTTP port |
+| `host` | every interface | address to listen on: `"127.0.0.1"` when nginx on the same machine proxies to it; without it a warning is logged at startup |
 | `baseEndPoint` | `"/api/"` | prefix for all endpoints |
 | `projectName` | `"Application project"` | shown in the monitor and as the 2FA issuer, so set it |
 | `endpoints` | `[]` | your `BaseEndpoint` instances |

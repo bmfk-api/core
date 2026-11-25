@@ -5,6 +5,7 @@ import { MonitorAuth } from "../monitor/MonitorAuth";
 import { PasswordHash } from "../helper/PasswordHash";
 import { IPendingReview, ReviewStore } from "../deployment/ReviewStore";
 import { logError } from "../LogService";
+import { FailureCounter } from "../helper/FailureCounter";
 
 export interface IReviewer { login: string, password: string, email: string }
 
@@ -32,7 +33,7 @@ export class ReviewAuth {
 
     private sessions = new Map<string, IReviewSession>();
     private enrollments = new Map<string, { login: string, secret: string, link: { project: string, sha256: string, linkHash: string }, createdAt: number }>();
-    private failures = new Map<string, { count: number, lockedUntil: number }>();
+    private failures = new FailureCounter(ReviewAuth.MAX_FAILED_ATTEMPTS, ReviewAuth.LOCKOUT_MS);
     private readonly totpFile: string;
 
     constructor(private store: ReviewStore, private reviewers: () => IReviewer[], private issuer = "Deploy review") {
@@ -74,15 +75,11 @@ export class ReviewAuth {
     // ---- lockout ----
 
     private lockedFor(login: string): number {
-        const f = this.failures.get(login);
-        return f && f.lockedUntil > Date.now() ? f.lockedUntil - Date.now() : 0;
+        return this.failures.lockedFor(login);
     }
 
     private fail(login: string) {
-        const f = this.failures.get(login) ?? { count: 0, lockedUntil: 0 };
-        f.count++;
-        if (f.count >= ReviewAuth.MAX_FAILED_ATTEMPTS) { f.lockedUntil = Date.now() + ReviewAuth.LOCKOUT_MS; f.count = 0; }
-        this.failures.set(login, f);
+        this.failures.fail(login);
     }
 
     // ---- sign-in ----
@@ -127,7 +124,7 @@ export class ReviewAuth {
             this.fail(login);
             return { error: totpError };
         }
-        this.failures.delete(login);
+        this.failures.clear(login);
         return { session: this.createSession(login, bound) };
     }
 
@@ -151,7 +148,7 @@ export class ReviewAuth {
         if (err) return { error: err };
         this.saveSecret(e.login, e.secret);
         this.enrollments.delete(enrollmentToken);
-        this.failures.delete(e.login);
+        this.failures.clear(e.login);
         return { session: this.createSession(e.login, e.link) };
     }
 

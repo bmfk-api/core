@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { UploadedFile } from "express-fileupload";
+import { logError } from "../LogService";
 
 // Deploys that wait for a reviewer's decision, one per project, under <projects_path>/.review/:
 //   <project>.pending.tgz   the uploaded archive, exactly as received (0600)
@@ -149,13 +150,17 @@ export class ReviewStore {
     // Append-only audit trail per project: who uploaded what (by hash), who decided, how it ended.
     // Rotated at 1 MB (the previous file is kept as .1).
     journal(project: string, event: string, details: Record<string, unknown>) {
+        const entry = JSON.stringify({ at: new Date().toISOString(), event, ...details });
         try {
             this.ensureDir();
             const file = path.join(this.dir, `${project}.history.jsonl`);
-            if (!NAME_RE.test(project)) return;
+            if (!NAME_RE.test(project)) throw new Error("invalid project name");
             try { if (fs.statSync(file).size > 1024 * 1024) fs.renameSync(file, file + ".1"); } catch { /* no file yet */ }
-            fs.appendFileSync(file, JSON.stringify({ at: new Date().toISOString(), event, ...details }) + "\n", { encoding: "utf-8", mode: 0o600 });
-        } catch { /* the audit trail must never break a deploy decision; the log line still exists */ }
+            fs.appendFileSync(file, entry + "\n", { encoding: "utf-8", mode: 0o600 });
+        } catch (e: any) {
+            // The audit trail must never break a deploy decision — but the entry must not vanish either.
+            logError(`Review journal of "${project}" not written (${e?.message ?? e}): ${entry}`);
+        }
     }
 
     // The archive is only needed while a decision is open; the record stays for the page to show.

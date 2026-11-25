@@ -343,6 +343,48 @@ export class LogService extends BaseService{
         return LogService.maskPAN(out);
     }
 
+    // A SQL literal: a quoted string (backslash or doubled-quote escapes), a number, NULL, TRUE/FALSE.
+    private static readonly SQL_LITERAL = String.raw`(?:'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|-?\d+(?:\.\d+)?|NULL|TRUE|FALSE)`;
+    private static readonly SQL_ASSIGN_RE = new RegExp(String.raw`([\x60"]?)([A-Za-z_][\w-]*)\1(\s*(?:=|<=>|<>|!=|\bLIKE\b|\bIN\b)\s*\(?\s*)(${LogService.SQL_LITERAL})`, "gi");
+
+    /**
+     * SQL text for statistics, error reports and logs: values of columns with a sensitive name (as
+     * in the log rules — password, token, cvv, pan, card_number, …) become '<REDACTED>', in
+     * `col = value` and in `(cols) VALUES (values)`; then the usual rules (PAN by Luhn, tokens, …).
+     */
+    static sanitizeSql(sql: string): string {
+        if (!sql) return sql;
+        const masked = "'<REDACTED>'";
+        let out = sql.replace(LogService.SQL_ASSIGN_RE, (whole, q, name, op, _lit) =>
+            LogService.SENSITIVE_KEY_RE.test(name) ? `${q}${name}${q}${op}${masked}` : whole);
+        out = out.replace(/\(([^()]*)\)\s*VALUES\s*((?:\((?:[^()'"]|'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|\([^()]*\))*\)\s*,?\s*)+)/gi, (whole, cols: string, rows: string) => {
+            const names = cols.split(",").map(c => c.trim().replace(/^[\x60"]|[\x60"]$/g, ""));
+            if (!names.some(n => LogService.SENSITIVE_KEY_RE.test(n))) return whole;
+            const maskedRows = rows.replace(/\((?:[^()'"]|'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|\([^()]*\))*\)/g, row =>
+                "(" + LogService.splitSqlList(row.slice(1, -1)).map((v, i) => LogService.SENSITIVE_KEY_RE.test(names[i] ?? "") ? masked : v).join(",") + ")");
+            return whole.slice(0, whole.length - rows.length) + maskedRows;
+        });
+        return LogService.sanitize(out);
+    }
+
+    // Top-level comma split of a VALUES row: commas inside quotes or parentheses (NOW(), CONCAT(a, b)) don't count.
+    private static splitSqlList(s: string): string[] {
+        const out: string[] = [];
+        let depth = 0, quote = "", start = 0;
+        for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (quote) {
+                if (c === "\\") i++;
+                else if (c === quote) { if (s[i + 1] === quote) i++; else quote = ""; }
+            } else if (c === "'" || c === '"') quote = c;
+            else if (c === "(") depth++;
+            else if (c === ")") depth--;
+            else if (c === "," && depth === 0) { out.push(s.slice(start, i)); start = i + 1; }
+        }
+        out.push(s.slice(start));
+        return out;
+    }
+
     // Any 13-19 digit run with optional single spaces or dashes as separators.
     // Lookarounds ensure we don't cut inside a longer digit string.
     private static readonly PAN_CANDIDATE_REGEX = /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g;

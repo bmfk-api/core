@@ -4,7 +4,25 @@
 
 Fixes from a security review of 1.1.0.
 
+### Breaking
+
+- Monitor: a user without a role (or with an unknown one) gets no access. It used to get `admin`. Set
+  `role` (`admin`, `it`, `analytic`) on every monitor user; the service names the users without one at
+  startup, and `npx bmfk access-config` shows them as "no role — no access".
+
 ### Security
+
+- SQL kept for diagnostics — the longest queries in the monitor's database panel, transaction failure
+  reports, `debug` query logs — is masked: values of columns with a sensitive name (password, token,
+  cvv, pan, card_number, exp, …) in `col = value` and `(cols) VALUES (…)`, and card numbers anywhere
+  (Luhn). `LogService.sanitizeSql()` does it.
+- Failed sign-ins (monitor, documentation, deploy review): the counters are bounded (10 000 logins) and
+  forget failures older than the lockout time, so sign-ins with random logins can't grow memory. A
+  locked login stays locked.
+- `host` option: the address to listen on (`"127.0.0.1"` behind nginx on the same machine). Without it
+  the service listens on every interface, as before, and says so at startup. `bmfk deployer-init` writes
+  `host: "127.0.0.1"` for the deployer.
+- Deploy review: a journal entry that can't be written goes to the log in full, instead of being dropped.
 
 - `InterceptorPayAuth`: the result (`req.interceptorResult`, which the request log records) no longer
   contains the shared key — everything of the key entry but `key`. The log masks fields named `key`,

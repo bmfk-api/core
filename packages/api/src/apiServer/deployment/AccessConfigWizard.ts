@@ -108,7 +108,7 @@ export async function AccessConfigWizard(fileArg?: string): Promise<void> {
         if (!doc.monitor.length) console.log(dim("  none — nobody can open the monitor"));
         for (const u of doc.monitor) {
             const state = PasswordHash.isHash(u.password) ? dim("hashed password") : red("PLAIN-TEXT password — refused at sign-in, change it");
-            console.log(`  ${u.login.padEnd(20)} ${String(u.role ?? "admin (default)").padEnd(16)} ${state}`);
+            console.log(`  ${u.login.padEnd(20)} ${u.role ? String(u.role).padEnd(16) : red("no role — no access".padEnd(16))} ${state}`);
         }
         console.log(bold("Documentation users"));
         if (!doc.documentation.length) console.log(dim("  none"));
@@ -150,7 +150,7 @@ export async function AccessConfigWizard(fileArg?: string): Promise<void> {
         }},
         "3": { title: "change a monitor role", run: async () => {
             const u = monitorLogin(await askValid("  login", "", v => monitorLogin(v) ? null : "no such monitor user"));
-            u.role = await askRole(u.role ?? "admin");
+            u.role = await askRole(u.role ?? "it");
             console.log(green(`  ✓ ${u.login} is now ${u.role}`));
             changed = true;
         }},
