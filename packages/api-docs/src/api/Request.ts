@@ -35,9 +35,14 @@ export interface IEnrollmentRequired {
 export const apiOrigin = (): string =>
 	import.meta.env.DEV ? (import.meta.env.VITE_API_ORIGIN ?? "http://localhost:18900") : window.location.origin;
 
-// Where the documentation's own endpoints live (".../doc/"): a doc-JSON URL pasted in the login form
-// or given as ?host=, else the path the backend injected into the page (__host, ".../doc/json").
+// Where the documentation's own endpoints live (".../doc/"). Served by the backend (it injects __host):
+// always this page's own origin, so a crafted ?host= can't send the sign-in elsewhere. Otherwise (dev,
+// a copy of the page): a doc-JSON URL pasted in the login form or given as ?host=.
 export const docJsonUrl = (): string => {
+	const injected = ((window as any)["__host"] as string | undefined)?.trim() ?? "";
+	if (injected && !/\{\{\w+\}\}/.test(injected))
+		return apiOrigin().replace(/\/$/, "") + (injected.startsWith("/") ? injected : "/" + injected);
+
 	let pasted = authForm.host?.trim() ?? "";
 	const fromQuery = new URLSearchParams(window.location.search).get("host");
 	if (fromQuery) pasted = fromQuery.trim();
@@ -47,11 +52,7 @@ export const docJsonUrl = (): string => {
 		if (!/^https?:\/\//i.test(pasted)) pasted = "https://" + pasted.replace(/^\/+/, "");
 		return pasted;
 	}
-	// The backend substitutes the template token in the page; an unreplaced one means "not served by it".
-	let injected = ((window as any)["__host"] as string | undefined)?.trim() ?? "";
-	if (!injected || /\{\{\w+\}\}/.test(injected)) injected = "/api/doc/json";
-	if (!injected.startsWith("/")) injected = "/" + injected;
-	return apiOrigin().replace(/\/$/, "") + injected;
+	return apiOrigin().replace(/\/$/, "") + "/api/doc/json";
 };
 
 const docUrl = (endpoint: string): string => docJsonUrl().replace(/json\/?$/, "") + endpoint;

@@ -119,6 +119,9 @@ export class AccessStore {
         this.apply({ monitor: parsed.monitor, documentation: parsed.documentation, monitorAllowedIps: parsed.monitorAllowedIps });
         logInfo(`Access ${initial ? "loaded" : "reloaded"} from ${this.file}: ${this.monitor.length} monitor, ${this.documentation.length} documentation user(s)`
             + (this.monitorAllowedIps.length ? `, monitor limited to ${this.monitorAllowedIps.join(", ")}` : ""));
+        const noRole = this.monitor.filter(u => !u.role).map(u => u.login);
+        if (noRole.length)
+            logWarn(`Access: monitor user(s) without a role get no access: ${noRole.join(", ")} — set admin, it or analytic (npx bmfk access-config ${this.file})`);
     }
 
     private refuse(reason: string, initial: boolean) {

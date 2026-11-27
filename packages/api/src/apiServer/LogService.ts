@@ -318,7 +318,7 @@ export class LogService extends BaseService{
 
         // JSON-style "sensitive-key": "value" — covers PCI SAD (CVV/CVC/PIN), CHD (exp,
         // holder name), credentials (password/secret/apikey/token), sessions and auth headers.
-        [/("(?:password|passwd|pwd|secret|api[_-]?key|api[_-]?secret|client[_-]?secret|access[_-]?key|private[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|authorization|cookie|set[_-]?cookie|session[_-]?id|sess[_-]?id|sid|cvv2?|cvc2?|cvn|cav2?|cid|security[_-]?code|card[_-]?verification[_-]?(?:value|code)?|pin|pin[_-]?block|encrypted[_-]?pin|iso[_-]?9564|exp|expiry|expiration|expiration[_-]?date|exp[_-]?date|exp[_-]?month|exp[_-]?year|cardholder[_-]?name|holder[_-]?name|card[_-]?holder|pan|dpan|primary[_-]?account[_-]?number|application[_-]?primary[_-]?account[_-]?number|card[_-]?number|card[_-]?no|account[_-]?number|application[_-]?expiration[_-]?date|online[_-]?payment[_-]?cryptogram|cryptogram|emv[_-]?data|track[12]?[_-]?data)"\s*:\s*)"[^"]*"/gi, '$1"<REDACTED>"'],
+        [/("(?:password|passwd|pwd|secret|key|secret[_-]?key|hmac[_-]?key|shared[_-]?key|signing[_-]?key|api[_-]?key|api[_-]?secret|client[_-]?secret|access[_-]?key|private[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|authorization|cookie|set[_-]?cookie|session[_-]?id|sess[_-]?id|sid|cvv2?|cvc2?|cvn|cav2?|cid|security[_-]?code|card[_-]?verification[_-]?(?:value|code)?|pin|pin[_-]?block|encrypted[_-]?pin|iso[_-]?9564|exp|expiry|expiration|expiration[_-]?date|exp[_-]?date|exp[_-]?month|exp[_-]?year|cardholder[_-]?name|holder[_-]?name|card[_-]?holder|pan|dpan|primary[_-]?account[_-]?number|application[_-]?primary[_-]?account[_-]?number|card[_-]?number|card[_-]?no|account[_-]?number|application[_-]?expiration[_-]?date|online[_-]?payment[_-]?cryptogram|cryptogram|emv[_-]?data|track[12]?[_-]?data)"\s*:\s*)"[^"]*"/gi, '$1"<REDACTED>"'],
 
         // Same-key JSON but with unquoted numeric values (CVV/PIN/expMonth often come as numbers).
         [/("(?:cvv2?|cvc2?|pin|exp[_-]?month|exp[_-]?year|service[_-]?code|pan|dpan|primary[_-]?account[_-]?number|application[_-]?primary[_-]?account[_-]?number|card[_-]?number|account[_-]?number)"\s*:\s*)(-?\d+)/gi, '$1"<REDACTED>"'],
@@ -331,7 +331,7 @@ export class LogService extends BaseService{
     // Property/header NAMES whose value must never be shown, whatever its shape. Used by
     // sanitizeDeep for objects (headers, params, interceptor results), where the regex rules
     // above — which look for "key":"value" in serialized text — don't apply.
-    private static readonly SENSITIVE_KEY_RE = /^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|apikey|password|passwd|pwd|secret|client[_-]?secret|access[_-]?key|private[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|session[_-]?id|sess[_-]?id|sid|cvv2?|cvc2?|cvn|cav2?|security[_-]?code|card[_-]?verification[_-]?(?:value|code)?|pin|pin[_-]?block|pan|card[_-]?number|exp|expiry|expiration|exp[_-]?date|exp[_-]?month|exp[_-]?year|cardholder[_-]?name|holder[_-]?name|card[_-]?holder|pan|dpan|primary[_-]?account[_-]?number|application[_-]?primary[_-]?account[_-]?number|card[_-]?number|card[_-]?no|account[_-]?number|application[_-]?expiration[_-]?date|online[_-]?payment[_-]?cryptogram|cryptogram|emv[_-]?data|track[12]?[_-]?data)$/i;
+    private static readonly SENSITIVE_KEY_RE = /^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[_-]?key|apikey|key|secret[_-]?key|hmac[_-]?key|shared[_-]?key|signing[_-]?key|password|passwd|pwd|secret|client[_-]?secret|access[_-]?key|private[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|session[_-]?id|sess[_-]?id|sid|cvv2?|cvc2?|cvn|cav2?|security[_-]?code|card[_-]?verification[_-]?(?:value|code)?|pin|pin[_-]?block|pan|card[_-]?number|exp|expiry|expiration|exp[_-]?date|exp[_-]?month|exp[_-]?year|cardholder[_-]?name|holder[_-]?name|card[_-]?holder|pan|dpan|primary[_-]?account[_-]?number|application[_-]?primary[_-]?account[_-]?number|card[_-]?number|card[_-]?no|account[_-]?number|application[_-]?expiration[_-]?date|online[_-]?payment[_-]?cryptogram|cryptogram|emv[_-]?data|track[12]?[_-]?data)$/i;
 
     static sanitize(text: string): string {
         if (!text || text.length < 3) return text;
@@ -341,6 +341,48 @@ export class LogService extends BaseService{
         // PAN mask last — Luhn-checked. Runs after key-based redaction so numeric fields
         // like "cvv":123 have already been cleaned and can't accidentally Luhn-validate.
         return LogService.maskPAN(out);
+    }
+
+    // A SQL literal: a quoted string (backslash or doubled-quote escapes), a number, NULL, TRUE/FALSE.
+    private static readonly SQL_LITERAL = String.raw`(?:'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|-?\d+(?:\.\d+)?|NULL|TRUE|FALSE)`;
+    private static readonly SQL_ASSIGN_RE = new RegExp(String.raw`([\x60"]?)([A-Za-z_][\w-]*)\1(\s*(?:=|<=>|<>|!=|\bLIKE\b|\bIN\b)\s*\(?\s*)(${LogService.SQL_LITERAL})`, "gi");
+
+    /**
+     * SQL text for statistics, error reports and logs: values of columns with a sensitive name (as
+     * in the log rules — password, token, cvv, pan, card_number, …) become '<REDACTED>', in
+     * `col = value` and in `(cols) VALUES (values)`; then the usual rules (PAN by Luhn, tokens, …).
+     */
+    static sanitizeSql(sql: string): string {
+        if (!sql) return sql;
+        const masked = "'<REDACTED>'";
+        let out = sql.replace(LogService.SQL_ASSIGN_RE, (whole, q, name, op, _lit) =>
+            LogService.SENSITIVE_KEY_RE.test(name) ? `${q}${name}${q}${op}${masked}` : whole);
+        out = out.replace(/\(([^()]*)\)\s*VALUES\s*((?:\((?:[^()'"]|'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|\([^()]*\))*\)\s*,?\s*)+)/gi, (whole, cols: string, rows: string) => {
+            const names = cols.split(",").map(c => c.trim().replace(/^[\x60"]|[\x60"]$/g, ""));
+            if (!names.some(n => LogService.SENSITIVE_KEY_RE.test(n))) return whole;
+            const maskedRows = rows.replace(/\((?:[^()'"]|'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|\([^()]*\))*\)/g, row =>
+                "(" + LogService.splitSqlList(row.slice(1, -1)).map((v, i) => LogService.SENSITIVE_KEY_RE.test(names[i] ?? "") ? masked : v).join(",") + ")");
+            return whole.slice(0, whole.length - rows.length) + maskedRows;
+        });
+        return LogService.sanitize(out);
+    }
+
+    // Top-level comma split of a VALUES row: commas inside quotes or parentheses (NOW(), CONCAT(a, b)) don't count.
+    private static splitSqlList(s: string): string[] {
+        const out: string[] = [];
+        let depth = 0, quote = "", start = 0;
+        for (let i = 0; i < s.length; i++) {
+            const c = s[i];
+            if (quote) {
+                if (c === "\\") i++;
+                else if (c === quote) { if (s[i + 1] === quote) i++; else quote = ""; }
+            } else if (c === "'" || c === '"') quote = c;
+            else if (c === "(") depth++;
+            else if (c === ")") depth--;
+            else if (c === "," && depth === 0) { out.push(s.slice(start, i)); start = i + 1; }
+        }
+        out.push(s.slice(start));
+        return out;
     }
 
     // Any 13-19 digit run with optional single spaces or dashes as separators.

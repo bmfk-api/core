@@ -103,6 +103,7 @@ extend the new ones) and are marked `@deprecated`, so editors strike them throug
 | WebSocket without `onAuthorize` | public, a warning | does not start; `public: true` to allow |
 | deployer `require_signature` | `false` | signed only; `"require_signature": false` lets password users in |
 | `fileTempDir` | `/tmp` | `/var/bmfk/<project>/uploads` (0700) |
+| deployer address (`host` in `deploy.json`, `review_url`) | any | https; http only to localhost (SSH tunnel) |
 
 Behind nginx, pass the host so same-origin calls (the monitor, your own front end on the API's domain)
 are recognised: `proxy_set_header Host $host;`. Otherwise list the front-end origin in
