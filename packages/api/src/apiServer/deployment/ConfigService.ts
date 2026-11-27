@@ -62,6 +62,27 @@ const _TConfig={
     pm2:true,
     pm2_attributes:[""],
     $__pm2_attributes_optional:true,
+    // What runs the app: "pm2", "systemd" (a user unit per project or slot, started at boot) or
+    // "none". Absent: "pm2" when pm2 is true, else "none".
+    runner:"",
+    $__runner_values:["pm2","systemd","none"],
+    $__runner_optional:true,
+    // Settings of the systemd runner (checked by settingsProblems in SystemdUnit.ts).
+    systemd:{
+        node_args:[""],
+        $__node_args_optional:true,
+        env:{},
+        $__env_optional:true,
+        memory_high:"",
+        $__memory_high_optional:true,
+        memory_max:"",
+        $__memory_max_optional:true,
+        stop_timeout:15,
+        $__stop_timeout_optional:true,
+        sandbox:true,
+        $__sandbox_optional:true,
+    },
+    $__systemd_optional:true,
     chmod:0,
     $__chmod_optional:true,
     email:[""],

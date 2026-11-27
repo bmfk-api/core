@@ -1,5 +1,62 @@
 # Changelog
 
+## 1.2.0 — 2026-11-27
+
+### Server
+
+- Graceful stop. On SIGTERM or SIGINT (a deploy, `systemctl stop`, `pm2 restart`) the server stops taking
+  connections, closes idle ones, and lets requests in progress finish for up to `shutdownTimeoutMs`
+  (default 10 s); then the rest are cut and the services' `finishService` run, so a database pool is
+  never closed under a running request. A request on a kept-alive connection during the stop gets 503
+  with `Connection: close`. A second signal exits at once. Under pm2 give it time to finish:
+  `--kill-timeout 12000` in the pm2 flags (pm2's own default is 1.6 s).
+- `APIService.addReadinessCheck(name, check)`: what must work for the app to serve (a database, a
+  queue). `GET /readiness` answers 503 while a check fails or the app is stopping, without saying why
+  (it is public); the reasons go to the log, once per change, and to `bmfk ps show`. With no checks
+  nothing changes.
+- Control channel. When the deployer starts an app (systemd or pm2) it passes a unix socket path in
+  `BMFK_CONTROL_SOCKET` (`<data folder>/<project>/control[-<slot>].sock`); the app listens on it, mode
+  0600, so only the same user can connect, and no port is opened. A fixed set of operations: `ping`,
+  `metrics` (requests and 5xx per minute, requests in progress, connections, event loop delay and load,
+  heap), `ready` (the readiness checks with reasons), `refresh-live`, `loglevel`. A change of log level
+  is logged by the app. An app started any other way has no socket.
+
+### Deployer
+
+- `"runner": "systemd"` in a project config runs the app as a systemd user unit,
+  `bmfk-<project>[-<slot>].service` in `~/.config/systemd/user`, instead of pm2. The unit is written
+  on every deploy and restore, enabled (it starts at boot once `loginctl enable-linger` is set for the
+  deployer's user) and restarted; a process that is not still running 3 seconds later fails the
+  deploy. The unit restarts the app whenever it exits, stops it with SIGTERM, and by default keeps it
+  in a sandbox: read-only system and home, private `/tmp`, writable deploy and data folders only.
+  Settings go in a `"systemd"` block (`node_args`, `env`, `memory_max`, `stop_timeout`, `sandbox`); values
+  that would need escaping in a unit file are refused before anything is written.
+- `bmfk ps`: the processes under systemd, pm2-style, straight from systemd (works while the deployer
+  is down). `bmfk ps list` shows id, project, slot, state, pid, uptime, restarts, memory, cpu, port and
+  whether it starts at boot, then pm2's processes if pm2 is there. `bmfk ps log <id|name|all>` with
+  `-f`, `-n`, `--errors`, `--since`; `show`, `start`, `stop` (also keeps it from starting at boot),
+  `restart`. `bmfk ps startup` checks what a start at boot needs (linger, a journal kept on disk, the
+  user's systemd) and prints the commands to fix it; it never runs sudo. Ids are kept in the units and
+  don't change between deploys; a project name means both its slots. `bmfk ps watch [-i 2]` redraws the
+  list until Ctrl+C. `bmfk ps show` adds peak memory, threads and disk read/write (the unit turns on
+  `IOAccounting`; shown where the io controller is delegated to the user).
+- `bmfk ps list` and `watch` add what the apps say over the control channel: requests and 5xx per
+  minute, event loop delay (p99) and heap, in yellow when there are 5xx, the loop stalls (≥ 200 ms) or
+  the heap is over 80 % of its limit; pm2 processes started by the deployer too. `bmfk ps show` adds the
+  version, live or standby, log level, requests in progress, connections and each readiness check with
+  its reason. `bmfk ps loglevel <id|name|all> [level]` shows or changes the log level until the next
+  restart.
+- A switch of blue-green slots tells both slots over their control sockets at once; each asks the
+  deployer for its state, so `APIService.onLiveChange` (crons, queue consumers) follows within a
+  second instead of at the next poll. Slots without the channel catch up as before.
+- `systemd.memory_high`: above it the app is slowed down and pushed to free memory (`MemoryHigh`), before
+  `memory_max` kills it; it must be below `memory_max`.
+- Watchdog: processes under systemd are checked every 10 seconds. A crash that systemd restarted, a
+  crash loop (systemd gave up) and a recovery go to Telegram and the project's emails. Restarts are
+  reported at most once per process per 5 minutes, with the count. `bmfk ps stop` is not reported.
+- pm2 stays: without `"runner"`, `"pm2": true` still means pm2 and `"pm2": false` starts nothing.
+  `"runner": "none"` is the same as `"pm2": false`.
+
 ## 1.1.0 — 2026-11-24
 
 Security fixes reported by @sorokin-vladimir in #2–#5, reworked so existing PayAuth clients keep working.

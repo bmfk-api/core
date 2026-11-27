@@ -5,20 +5,28 @@ export interface IBaseService {
   getName: () => string
 }
 
-// Watch for process termination
+// Watch for process termination (SIGTERM from systemd or a deploy, SIGINT from pm2 or Ctrl+C):
+//   1. drain — stop taking requests and let the ones in progress finish (APIService);
+//   2. finalize — every service's finishService (save state, close pools), all at once;
+//   3. exit.
+// Services close only after the requests that may still use them are done. A second signal while
+// stopping exits at once.
 const finalize:(()=>Promise<void>)[]=[]
+const drain:(()=>Promise<void>)[]=[]
 
-// interrupt (ctrl-c)
-process.on('SIGINT', async () => {
+/** Run before the services are finalized on SIGTERM/SIGINT. */
+export function onDrain(fn:()=>Promise<void>){ drain.push(fn); }
+
+let stopping=false;
+async function shutdown(){
+  if(stopping) process.exit(0);
+  stopping=true;
+  await Promise.all(drain.map(f=>f().catch(()=>{})));
   await Promise.all(finalize.map(f=>f()));
   process.exit(0);
-});
-            
-// terminate (kill)
-process.on('SIGTERM',async () => {
-  await Promise.all(finalize.map(f=>f()));
-  process.exit(0);
-});
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 
 // Base service

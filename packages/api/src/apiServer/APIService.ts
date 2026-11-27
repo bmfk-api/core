@@ -6,7 +6,7 @@ import { BaseEndpoint, IBaseEndpoint } from './BaseEndpoint'
 import DefaultErrors, { ErrorUtils } from './structures/DefaultErrors'
 import { IRequest, IError, IResponse } from './structures/Interfaces'
 import { Signal, Req } from "../signal/Signal";
-import { logCrit, logError, logAPI, logWarn, LogService } from './LogService'
+import { logCrit, logError, logAPI, logWarn, logInfo, LogService } from './LogService'
 import { Monitor } from './monitor/Monitor'
 
 import fileUpload from 'express-fileupload'
@@ -33,6 +33,9 @@ import { BlockedIps } from './security/BlockedIps'
 import { MonitorAuth } from './monitor/MonitorAuth'
 import { clientIp, fromTrustedProxy, DEFAULT_TRUSTED_PROXIES } from './helper/ClientIp'
 import { Trace, TRACE_HEADER } from './helper/Trace'
+import { ControlServer } from './control/ControlServer'
+import { addReadinessCheck, ReadinessCheck } from './control/ReadinessChecks'
+import { onDrain } from './BaseService'
 import { Deployer } from './deployment/Deployer'
 import { Review } from './review/Review'
 import { WebSocketServer as WsServer } from 'ws'
@@ -84,6 +87,10 @@ export interface APIServiceOptions<TInterceptor=unknown>{
 	endpoints:IBaseEndpoint[],
 	keepAliveTimeout?: number,
 	headersTimeout?: number,
+	// On SIGTERM/SIGINT: how long requests in progress may take to finish before the connections are
+	// cut and the services stop. Default 10 s — keep it below systemd's stop_timeout (15 s) and pm2's
+	// --kill-timeout.
+	shutdownTimeoutMs?: number,
 	jsonLimit:string // "10mb"
 	// Default: true unless NODE_ENV=development.
 	isProductionEnvironment:boolean,
@@ -286,6 +293,20 @@ export class APIService<TInterceptorResult=any,TInternalCallParams=any> extends 
 		return onLiveChange(cb);
 	}
 
+	/**
+	 * What must work for the app to serve requests. GET /readiness answers 503 while a check fails
+	 * (and while the app is stopping); the reasons go to the log and to `bmfk ps show`.
+	 *   APIService.addReadinessCheck("db", async () => { await db.query("SELECT 1"); return true; });
+	 * A check returns true, or false / a reason / throws. Returns a function that removes it.
+	 */
+	static addReadinessCheck(name: string, check: ReadinessCheck): () => void {
+		return addReadinessCheck(name, check);
+	}
+
+	/** true from SIGTERM/SIGINT on: no new requests are taken. */
+	static draining = false;
+	private inFlight = 0;
+
 	private version = PACKAGE_VERSION
 	private options:APIServiceOptions;
 	private monitor:MonitorService|null=null;
@@ -477,6 +498,20 @@ export class APIService<TInterceptorResult=any,TInternalCallParams=any> extends 
 		// Seen by every response (404s, body-parse errors and normal replies alike) through the
 		// final status code. Observation only: the request itself is never affected.
 		const trustedProxies = new Set(this.options.trustedProxies ?? DEFAULT_TRUSTED_PROXIES);
+
+		// Requests in progress, for a graceful stop. While stopping, a request on a kept-alive connection
+		// gets 503 and the connection is closed: nginx retries it on the other slot or upstream.
+		app.use((req,res,next)=>{
+			if(APIService.draining){
+				res.setHeader("Connection","close");
+				res.status(503).json({ error:{ code:503, message:"The service is restarting", httpStatus:503 }, data:null, httpStatus:503 });
+				return;
+			}
+			this.inFlight++;
+			let counted=true;
+			res.on("close",()=>{ if(counted){ counted=false; this.inFlight--; } });
+			next();
+		});
 
 		// Before anything can answer: every response, a 403 for a blocked address included, carries the
 		// request's trace id, and everything the request causes runs with it (see helper/Trace).
@@ -793,10 +828,35 @@ export class APIService<TInterceptorResult=any,TInternalCallParams=any> extends 
 			});
 		})
 
+		// Graceful stop: no new connections, idle ones closed, requests in progress get up to
+		// shutdownTimeoutMs; then whatever is left is cut and the services finalize.
+		onDrain(async ()=>{
+			APIService.draining = true;
+			const limit = this.options.shutdownTimeoutMs ?? 10_000;
+			const started = Date.now();
+			control.stop();
+			server.close();
+			server.closeIdleConnections();
+			for(const c of wss?.connections ?? []) { try { c.close(1001, "Server restarting"); } catch {} }
+			while(this.inFlight > 0 && Date.now() - started < limit)
+				await new Promise(r=>setTimeout(r,50));
+			if(this.inFlight > 0) logWarn(`Stopping: ${this.inFlight} request(s) still running after ${limit} ms — cut`);
+			else logInfo(`Stopping: requests drained in ${Date.now() - started} ms`);
+			server.closeAllConnections();
+		});
+
+		// The deployer's control channel (control/Control.ts), when it started this process.
+		const control = new ControlServer({
+			version: this.version,
+			inFlight: () => this.inFlight,
+			connections: () => new Promise(res => server.getConnections((e, n) => res(e ? null : n))),
+		});
+
 		server.listen(this.options.port, () => {
 			logAPI('${APIService.js}','API Service started at: '+this.options.port+", with base endpoint:"+this.options.baseEndPoint+", ver.: "+this.version)
 			// Blue-green standing: background refresh for APIService.blueGreenState / the change signal.
 			startBlueGreenWatcher(this.options.blueGreenWatchMs ?? 5000);
+			control.start();
 		})
 	}
 
