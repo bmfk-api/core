@@ -39,7 +39,7 @@ export async function ProjectConfigWizard(): Promise<void> {
 
     section("Project");
     const name = await askValid("Name (e.g. api.gateway.example.com)", "", v => projectNameProblem(v));
-    const description = await ask("Description", "");
+    const description = await ask("Description", name);
     const destination = await askValid("Destination folder on the server", `/var/node/${name}`,
         v => !path.isAbsolute(v) ? "must be an absolute path" : /^\/(var|etc|home|usr|opt|srv|tmp|root)?\/?$/.test(v) ? "pick a folder of its own, not a system folder" : null);
 

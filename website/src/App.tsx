@@ -6,6 +6,7 @@ import { Home } from "./pages/Home";
 import { DocsLayout } from "./components/DocsLayout";
 import { DocPage } from "./pages/DocPage";
 import { NotFound } from "./pages/NotFound";
+import { Configure } from "./pages/Configure";
 
 export function App() {
   const { pathname, hash } = useLocation();
@@ -20,6 +21,7 @@ export function App() {
         <Route path="/" element={<Home />} />
         <Route path="/docs" element={<Navigate to="/docs/introduction" replace />} />
         <Route path="/docs/:slug" element={<DocsLayout><DocPage /></DocsLayout>} />
+        <Route path="/configure" element={<Configure />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
       <Footer />

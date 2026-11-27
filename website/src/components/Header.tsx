@@ -32,6 +32,8 @@ export function Header() {
           <NavLink to="/docs/deployer">Deploy</NavLink>
           <NavLink to="/docs/security">Security</NavLink>
           <NavLink to="/docs/pci-dss">PCI DSS</NavLink>
+          {/* A full page load: the generator runs under its own CSP, which only a document load applies. */}
+          <NavLink to="/configure" reloadDocument>Configure</NavLink>
         </nav>
         <div className="header-actions">
           <button className="search-btn" onClick={() => setSearchOpen(true)} aria-label="Search the docs">

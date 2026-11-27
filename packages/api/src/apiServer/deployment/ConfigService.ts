@@ -8,6 +8,7 @@ import { Validator, ValidationModel } from "../helper/Validator";
 import { logError, logWarn } from "../LogService";
 import DefaultErrors from "../structures/DefaultErrors";
 import { PasswordHash } from "../helper/PasswordHash";
+import { projectNameProblem } from "./ConfigRules";
 
 //["--cron-restart", "10 0 * * *"]
 
@@ -140,15 +141,8 @@ const _TConfig={
 export type IConfig = ValidationModel<typeof _TConfig>
 
 // The project name ends up in a package.json "name", in /var/bmfk/<name>, in state, backup and
-// secrets file names — so it must be valid as all of them: an npm package name that is also a plain
-// folder name. Lowercase letters, digits, ".", "_", "-"; starts with a letter or digit; up to 100.
-const PROJECT_NAME = /^[a-z0-9][a-z0-9._-]{0,99}$/;
-export function projectNameProblem(name: unknown): string | null {
-    if (typeof name !== "string" || name.length === 0) return "the project has no \"name\"";
-    if (!PROJECT_NAME.test(name))
-        return `project name "${name}" is not allowed — lowercase letters, digits, ".", "_" and "-" only, starting with a letter or digit, up to 100 characters (e.g. "api.gateway.example.com")`;
-    return null;
-}
+// secrets file names — so it must be valid as all of them (the rule is in ConfigRules, shared with the site).
+export { projectNameProblem };
 // The project config schema, for tools that build or check configs (e.g. `bmfk project-config`).
 export const PROJECT_CONFIG_MODEL = _TConfig;
 

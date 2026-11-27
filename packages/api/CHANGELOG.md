@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.1 — 2026-11-27
+
+### Deployer
+
+- `bmfk project-config`: the description defaults to the project name. Left empty, the config failed the
+  deployer's own validation.
+- The project name rule lives in `ConfigRules`, with the other rules the config generator on the website
+  shares with the CLI (password length, logins, scrypt hash format, the project config it builds).
+
 ## 1.1.0 — 2026-11-24
 
 Security fixes reported by @sorokin-vladimir in #2–#5, reworked so existing PayAuth clients keep working.
