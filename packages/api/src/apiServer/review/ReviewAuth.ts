@@ -4,6 +4,8 @@ import crypto from "crypto";
 import { MonitorAuth } from "../monitor/MonitorAuth";
 import { PasswordHash } from "../helper/PasswordHash";
 import { IPendingReview, ReviewStore } from "../deployment/ReviewStore";
+import { logError } from "../LogService";
+import { FailureCounter } from "../helper/FailureCounter";
 
 export interface IReviewer { login: string, password: string, email: string }
 
@@ -31,7 +33,7 @@ export class ReviewAuth {
 
     private sessions = new Map<string, IReviewSession>();
     private enrollments = new Map<string, { login: string, secret: string, link: { project: string, sha256: string, linkHash: string }, createdAt: number }>();
-    private failures = new Map<string, { count: number, lockedUntil: number }>();
+    private failures = new FailureCounter(ReviewAuth.MAX_FAILED_ATTEMPTS, ReviewAuth.LOCKOUT_MS);
     private readonly totpFile: string;
 
     constructor(private store: ReviewStore, private reviewers: () => IReviewer[], private issuer = "Deploy review") {
@@ -40,13 +42,20 @@ export class ReviewAuth {
 
     // ---- 2FA store ----
 
+    // Only a missing file means "nobody enrolled yet". An unreadable or damaged one throws: read as
+    // empty, it would offer every reviewer a fresh enrollment and then overwrite the real secrets.
     private readSecrets(): Record<string, { secret: string, enrolledAt: number }> {
-        try {
-            const doc = JSON.parse(fs.readFileSync(this.totpFile, "utf-8"));
-            return doc && typeof doc.users === "object" && doc.users ? doc.users : {};
-        } catch {
-            return {};
+        let text: string;
+        try { text = fs.readFileSync(this.totpFile, "utf-8"); }
+        catch (e: any) {
+            if (e?.code === "ENOENT") return {};
+            throw new Error(`reviewers' 2FA store ${this.totpFile} can't be read (${e?.code ?? e})`);
         }
+        let doc: any;
+        try { doc = JSON.parse(text); } catch { doc = null; }
+        if (!doc || typeof doc.users !== "object" || !doc.users || Array.isArray(doc.users))
+            throw new Error(`reviewers' 2FA store ${this.totpFile} is damaged`);
+        return doc.users;
     }
 
     private secretFor(login: string): string | null {
@@ -66,15 +75,11 @@ export class ReviewAuth {
     // ---- lockout ----
 
     private lockedFor(login: string): number {
-        const f = this.failures.get(login);
-        return f && f.lockedUntil > Date.now() ? f.lockedUntil - Date.now() : 0;
+        return this.failures.lockedFor(login);
     }
 
     private fail(login: string) {
-        const f = this.failures.get(login) ?? { count: 0, lockedUntil: 0 };
-        f.count++;
-        if (f.count >= ReviewAuth.MAX_FAILED_ATTEMPTS) { f.lockedUntil = Date.now() + ReviewAuth.LOCKOUT_MS; f.count = 0; }
-        this.failures.set(login, f);
+        this.failures.fail(login);
     }
 
     // ---- sign-in ----
@@ -99,7 +104,12 @@ export class ReviewAuth {
         }
 
         const bound = { project: link.pending.project, sha256: link.pending.sha256, linkHash: link.pending.reviewers[login].tokenHash };
-        const secret = this.secretFor(login);
+        let secret: string | null;
+        try { secret = this.secretFor(login); }
+        catch (e: any) {
+            logError(`Review sign-in of "${login}" refused: ${e?.message ?? e} — restore the file from a backup; no new enrollment is offered meanwhile`);
+            return { error: "Sign-in is unavailable: the 2FA store needs the operator's attention." };
+        }
         if (!secret) {
             const now = Date.now();
             for (const [t, e] of this.enrollments) if (now - e.createdAt > ReviewAuth.ENROLLMENT_TTL_MS) this.enrollments.delete(t);
@@ -114,7 +124,7 @@ export class ReviewAuth {
             this.fail(login);
             return { error: totpError };
         }
-        this.failures.delete(login);
+        this.failures.clear(login);
         return { session: this.createSession(login, bound) };
     }
 
@@ -125,15 +135,20 @@ export class ReviewAuth {
             return { error: "Enrollment expired — sign in again." };
         }
         // Someone may have enrolled meanwhile (another tab): never overwrite an existing secret.
-        if (this.secretFor(e.login)) {
-            this.enrollments.delete(enrollmentToken);
-            return { error: "2FA is already set up for this reviewer — sign in with your code." };
+        try {
+            if (this.secretFor(e.login)) {
+                this.enrollments.delete(enrollmentToken);
+                return { error: "2FA is already set up for this reviewer — sign in with your code." };
+            }
+        } catch (err: any) {
+            logError(`Review 2FA enrollment of "${e.login}" refused: ${err?.message ?? err}`);
+            return { error: "Sign-in is unavailable: the 2FA store needs the operator's attention." };
         }
         const err = MonitorAuth.verifyTotp("review:" + e.login, e.secret, String(totp ?? ""));
         if (err) return { error: err };
         this.saveSecret(e.login, e.secret);
         this.enrollments.delete(enrollmentToken);
-        this.failures.delete(e.login);
+        this.failures.clear(e.login);
         return { session: this.createSession(e.login, e.link) };
     }
 

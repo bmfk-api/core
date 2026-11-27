@@ -45,7 +45,7 @@ export interface IMonitorUser{
 	// Optional base32 TOTP secret (RFC 6238). When set, the second factor is required at login.
 	totpSecret?:string,
 	// admin — everything; it — dashboard + logs; analytic — dashboard only.
-	// Absent means admin, so existing configs keep working (a warning is logged).
+	// Absent: no access at all (a warning is logged) — the role must be spelled out.
 	role?:"admin"|"it"|"analytic",
 	login:string,
 	password:string
@@ -76,6 +76,8 @@ export interface IInterceptor<T>{
 
 export interface APIServiceOptions<TInterceptor=unknown>{
 	port:number,
+	// Address to listen on. "127.0.0.1" behind a proxy on the same machine; absent: every interface.
+	host?:string,
 	baseEndPoint:string // "/api/"
 	// Browser origins allowed to call the API, besides the API's own (same-origin, always allowed).
 	// Default []: same-origin only. "*" lets any site call it, WITHOUT cookies/credentials.
@@ -793,11 +795,15 @@ export class APIService<TInterceptorResult=any,TInternalCallParams=any> extends 
 			});
 		})
 
-		server.listen(this.options.port, () => {
-			logAPI('${APIService.js}','API Service started at: '+this.options.port+", with base endpoint:"+this.options.baseEndPoint+", ver.: "+this.version)
+		const started = () => {
+			logAPI('${APIService.js}','API Service started at: '+(this.options.host ? this.options.host+":" : "")+this.options.port+", with base endpoint:"+this.options.baseEndPoint+", ver.: "+this.version)
+			if(!this.options.host)
+				logWarn("API Service listens on every network interface: set `host` (e.g. \"127.0.0.1\" behind nginx) or close the port in the firewall");
 			// Blue-green standing: background refresh for APIService.blueGreenState / the change signal.
 			startBlueGreenWatcher(this.options.blueGreenWatchMs ?? 5000);
-		})
+		};
+		if(this.options.host) server.listen(this.options.port, this.options.host, started);
+		else server.listen(this.options.port, started);
 	}
 
 

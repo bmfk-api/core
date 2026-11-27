@@ -3,7 +3,7 @@ import { IDBAdapter, } from "./IDBAdapter";
 import { isDBField, looksLikeFieldOptions } from "./DBField";
 import mysql from 'mysql2/promise';
 import fs from 'fs';
-import { logDB, logCrit, logError, logInfo, logWarn } from "../LogService";
+import { logDB, logCrit, logError, logInfo, logWarn, LogService } from "../LogService";
 import DefaultErrors from "../structures/DefaultErrors";
 import path from "path";
 import { S_STAT_REGISTRATE_SQL_REQUEST } from "../MonitorService";
@@ -106,10 +106,10 @@ export class MysqlAdapter implements IDBAdapter {
             if (execTime < slot.minQueryTime) slot.minQueryTime = execTime;
         }
 
-        // top-5 longest queries (query truncated to 100 chars)
-        const truncated = query.length > 100 ? query.substring(0, 100) : query;
+        // top-5 longest queries (masked, then truncated to 100 chars): the monitor shows them
         if (slot.longestQueries.length < 5 || execTime > slot.longestQueries[slot.longestQueries.length - 1].execution) {
-            slot.longestQueries.push({ query: truncated, execution: execTime });
+            const safe = LogService.sanitizeSql(query);
+            slot.longestQueries.push({ query: safe.length > 100 ? safe.substring(0, 100) : safe, execution: execTime });
             slot.longestQueries.sort((a, b) => b.execution - a.execution);
             if (slot.longestQueries.length > 5)
                 slot.longestQueries.length = 5;
@@ -602,7 +602,7 @@ export class MysqlAdapter implements IDBAdapter {
         const isPing = query.trim().toLowerCase() === "select 1";
         if (this.options.debug || request.debug) {
             if (!isPing)
-                logDB(query)
+                logDB(LogService.sanitizeSql(query))
         }
 
         if (request.parseQueryOnly) {
@@ -674,7 +674,7 @@ export class MysqlAdapter implements IDBAdapter {
                 this.finalizeConnection(conn);
 
             if(trx)
-                trx.queries.push({sql:query,status:"ok"})
+                trx.queries.push({sql:LogService.sanitizeSql(query),status:"ok"})
 
             const finishedAt = Date.now();
             if (!isPing) {
@@ -725,7 +725,7 @@ export class MysqlAdapter implements IDBAdapter {
             const error = this.createMysqlQueryError(e);
 
              if(trx)
-                trx.queries.push({sql:query,status:error.code})
+                trx.queries.push({sql:LogService.sanitizeSql(query),status:error.code})
 
             // recreate pool, connection error
             if (`${e}`.indexOf('ECONNREFUSED') !== -1 || `${e}`.indexOf("PROTOCOL_")!==-1 || error.message.includes("closed state")){
@@ -739,13 +739,12 @@ export class MysqlAdapter implements IDBAdapter {
                 this.storeTransactionAsProblem(trx, "error:"+error.errno)
 
             if (request.throwable) {
+                // The driver's message names tables, constraints and values: it goes to the log and
+                // the stack (dropped in production), never into `details`, which the client gets.
                 const base = error.isDuplicateError ? DefaultErrors.DB_DUPLICATE_ERROR : DefaultErrors.DB_ERROR;
                 const customText = error.isDuplicateError ? request.onDuplicateErrorText : request.onErrorText;
-                if (customText) {
-                    // Caller provided a user-facing text — replace the message and skip stack.
-                    throw { ...base, message: customText, details: error.message }
-                }
-                throw { ...base, details: error.message, stack: error }
+                logError(`DB query failed: ${error.message}`);
+                throw { ...base, ...(customText ? { message: customText } : {}), stack: error }
             }
 
             
