@@ -104,6 +104,7 @@ extend the new ones) and are marked `@deprecated`, so editors strike them throug
 | deployer `require_signature` | `false` | signed only; `"require_signature": false` lets password users in |
 | `fileTempDir` | `/tmp` | `/var/bmfk/<project>/uploads` (0700) |
 | deployer address (`host` in `deploy.json`, `review_url`) | any | https; http only to localhost (SSH tunnel) |
+| `fileTempDir` | `/tmp` | `~/.bmfk/<project>/uploads` (0700) |
 
 Behind nginx, pass the host so same-origin calls (the monitor, your own front end on the API's domain)
 are recognised: `proxy_set_header Host $host;`. Otherwise list the front-end origin in
@@ -122,9 +123,36 @@ journal has it. An unexpected exception is one CRIT line with its stack.
 
 ## access: a file in the data folder by default
 
-The default of `access` is now `""`: the service reads `/var/bmfk/<project>/access.json` and re-reads it on
+The default of `access` is now `""`: the service reads `~/.bmfk/<project>/access.json` (the data folder, see
+below) and re-reads it on
 change. Without the file the monitor and the documentation are closed (6.x: an empty inline object, also
 closed). Projects that set `access` keep what they set.
+
+## Data folder
+
+What a service keeps between restarts and deploys (access, 2FA, metrics, threats, blocked addresses, the
+deployer's secrets file, uploads) lives in a data folder per project, never beside the deployed code:
+`~/.bmfk/<project>/` of the user the service runs as (1.2.0; 1.0 and 1.1 used `/var/bmfk/<project>/`,
+which is still used while it has project folders). `BMFK_DATA_DIR` sets another root. 6.x kept these
+files next to the code; a 1.x service reads the old blocked-addresses file once and moves on.
+
+## Running the processes: systemd or pm2
+
+The 6.x deployer ran every project with pm2. A 1.2 deployer can do the same, or run each project as a
+systemd user unit (`"runner": "systemd"` in the project config): started at boot without pm2, restarted
+when it exits, kept in a filesystem sandbox, with its log in the journal. `bmfk ps` lists and controls
+these processes (`list`, `watch`, `log`, `show`, `restart`, `loglevel`, `startup`). Without `"runner"`
+nothing changes: `"pm2": true` still means pm2. `bmfk deployer-init` sets the deployer itself up as a
+systemd unit on Linux.
+
+## Stopping and readiness
+
+6.x exited on SIGTERM/SIGINT at once, cutting requests in progress. 1.x stops taking new ones and lets
+those in progress finish (up to `shutdownTimeoutMs`, 10 s) before the services close. Under pm2 add
+`--kill-timeout 12000` to the project's pm2 flags, or pm2 kills the process after its default 1.6 s.
+
+`GET /readiness` answered 200 always. It still does, unless the app adds checks
+(`APIService.addReadinessCheck`) — then 503 while one fails — and it answers 503 while the app is stopping.
 
 ## Validation: a number sample is no longer a bound
 

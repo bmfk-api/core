@@ -26,6 +26,10 @@ import { BackupManager, MAX_BACKUPS } from "./BackupManager";
 import { PasswordHash } from "../helper/PasswordHash";
 import { IPendingReview, ReviewStore } from "./ReviewStore";
 import { SecretsInjector } from "./SecretsInjector";
+import { IProcessRunner, Pm2Runner, runnerKind } from "./ProcessRunner";
+import { SystemdRunner } from "./SystemdRunner";
+import { settingsProblems } from "./SystemdUnit";
+import { controlCall, controlSocketPath } from "../control/Control";
 import { IpAllowList } from "../helper/IpAllowList";
 import { ISignedAuthVerdict } from "../interceptors/InterceptorSignedAuth";
 
@@ -139,6 +143,26 @@ export class DeployerService extends BaseService{
     }
     busy=new Map<string,boolean>();
     reviews!:ReviewStore;
+    // What starts deployed projects, by the project's "runner". Replaced in tests.
+    runners: { pm2: IProcessRunner, systemd: IProcessRunner } = { pm2: new Pm2Runner(), systemd: new SystemdRunner() };
+
+    // The runner of a project, or null when nothing is started ("runner": "none", or "pm2": false).
+    // A bad "runner" or "systemd" block throws, before a deploy or restore writes anything.
+    private _runnerFor(found: IConfig, project: string): IProcessRunner | null {
+        const kind = runnerKind(found as any);
+        if(typeof kind !== "string"){
+            logError(`"${project}": ${kind.error}`);
+            throw {code:69,message:"The project's runner is not valid.",details:kind.error,httpStatus:400}
+        }
+        if(kind === "systemd"){
+            const problems = settingsProblems((found as any).systemd);
+            if(problems.length){
+                logError(`"${project}": ${problems.join("; ")}`);
+                throw {code:68,message:"The systemd settings of the project are not valid.",details:problems.join("; "),httpStatus:400}
+            }
+        }
+        return kind === "none" ? null : this.runners[kind];
+    }
     private _setupWatchDebounceTimer: NodeJS.Timeout | null = null;
     private _lastSetupHash: string | null = null;
     
@@ -435,6 +459,9 @@ export class DeployerService extends BaseService{
                 
             
 
+            // What runs the process — checked before anything is written, like the secrets below.
+            const runner = this._runnerFor(found, realName);
+
             // Secrets file: resolved before anything is written, so a bad setting can't leave a
             // half-deployed project behind.
             let secretsFile: string | null = null;
@@ -451,8 +478,8 @@ export class DeployerService extends BaseService{
                 // The secrets file is 0600 and owned by the deployer's user. pm2 started by the
                 // deployer runs the app as that same user — unless the project switches user, and
                 // then the app couldn't read its own config and would not start.
-                if(found.pm2){
-                    const attrs = DeployerService._pm2AttributesFor(found, projectState);
+                if(runner?.kind === "pm2"){
+                    const attrs = Pm2Runner.attributesFor(found, projectState);
                     const switchesUser = attrs.find(a => /^--(uid|gid|user)(=|$)/.test(a));
                     if(switchesUser){
                         const why = `pm2 runs this project as another user (${switchesUser}), which couldn't read the secrets file`;
@@ -597,17 +624,21 @@ export class DeployerService extends BaseService{
                 }
             }
 
-            // RUN OR RESTART PM2
-            if(found.pm2){
-                const pm2Result =await this.runPM2(found,projectState)
-                if(ErrorUtils.isError(pm2Result)){
-                    this.telegram(found.name, "error-pm2", user.login);
+            // RUN OR RESTART (pm2 or systemd)
+            if(runner){
+                const runResult = await runner.start(found, {
+                    name: found.name, project: realName,
+                    slot: projectState ? projectState.lastDeployed as "blue"|"green" : null,
+                    destination: found.destination, config: found.config as Record<string, unknown>,
+                }, projectState);
+                if(runResult){
+                    this.telegram(found.name, "error-" + runner.kind, user.login);
                     if(found.email && found.email.length > 0){
                         for(let email of found.email){
-                            this.notifier?.notifyEmailStatus(email,"error-pm2",found.name,user.login)
+                            this.notifier?.notifyEmailStatus(email,"error-" + runner.kind,found.name,user.login)
                         }
                     }
-                    throw pm2Result
+                    throw runResult
                 }
             }
 
@@ -1017,6 +1048,17 @@ export class DeployerService extends BaseService{
                 hookError = await NginxHelper.runHook(found.bluegreen.on_switch);
             }
 
+            // Tell both slots now, over their control sockets, instead of at their next poll: crons and
+            // queue consumers move to the new live slot within a second. Each slot asks the deployer
+            // for the state itself. Best effort: a slot without the channel catches up on its poll.
+            const told = await Promise.all((["blue","green"] as const).map(async slot => {
+                const sock = controlSocketPath(found.name, slot);
+                if(!sock) return null;
+                try{ return (await controlCall<{live:boolean|null}>(sock, "refresh-live", undefined, 3000)).live; }
+                catch{ return null; }
+            }));
+            logInfo(`Switch of "${found.name}": slots told — blue ${told[0] ?? "no answer"}, green ${told[1] ?? "no answer"}`);
+
             const status = hookError ? "switch-hook-failed" : action === "rollback" ? `rolled-back-to-${target}` : `switched-to-${target}`;
             this.telegram(found.name, status, user.login);
             if(found.email && found.email.length > 0){
@@ -1179,10 +1221,15 @@ export class DeployerService extends BaseService{
                 this._writeBlueGreenFiles(realName, state, path.resolve(found.destination));
 
             let pm2Error:IError|null = null;
-            if(found.pm2){
-                const pm2Found = { ...structuredClone(found), name: isBG ? `${realName}-${slot}` : realName, destination: target } as IConfig;
-                pm2Error = await this.runPM2(pm2Found, state ? { ...state, lastDeployed: slot as any } : null);
-                if(pm2Error) logError(`Restore: pm2 restart failed for ${pm2Found.name}: ${pm2Error.details ?? pm2Error.message}`);
+            const runner = this._runnerFor(found, realName);
+            if(runner){
+                const runFound = { ...structuredClone(found), name: isBG ? `${realName}-${slot}` : realName, destination: target } as IConfig;
+                const slotConfig = isBG ? (slot === "blue" ? found.bluegreen?.blue_config : found.bluegreen?.green_config) : null;
+                pm2Error = await runner.start(runFound, {
+                    name: runFound.name, project: realName, slot: (slot ?? null) as "blue"|"green"|null, destination: target,
+                    config: { ...(found.config ?? {}), ...(slotConfig ?? {}) } as Record<string, unknown>,
+                }, state ? { ...state, lastDeployed: slot as any } : null);
+                if(pm2Error) logError(`Restore: ${runner.kind} restart failed for ${runFound.name}: ${pm2Error.details ?? pm2Error.message}`);
             }
 
             if(isBG && state){
@@ -1197,10 +1244,10 @@ export class DeployerService extends BaseService{
             await BackupManager.prune(root, realName, MAX_BACKUPS, [data.backup]);
 
             logInfo(`Restored ${realName}${slot ? "/" + slot : ""} from ${data.backup} by ${user.login}`);
-            this.telegram(found.name, pm2Error ? "error-restore-pm2" : `restored from ${data.backup}`, user.login);
+            this.telegram(found.name, pm2Error ? "error-restore-" + (runner?.kind ?? "pm2") : `restored from ${data.backup}`, user.login);
             if(found.email && found.email.length > 0){
                 for(let email of found.email)
-                    this.notifier?.notifyEmailStatus(email, pm2Error ? "error-restore-pm2" : "restored", found.name, user.login)
+                    this.notifier?.notifyEmailStatus(email, pm2Error ? "error-restore-" + (runner?.kind ?? "pm2") : "restored", found.name, user.login)
             }
 
             return {data:{
@@ -1212,7 +1259,9 @@ export class DeployerService extends BaseService{
                 // A restored ACTIVE slot is live immediately; an inactive one needs an activate.
                 live: !isBG || slot === state?.active,
                 preRestoreBackup: preRestore,
-                pm2Restarted: !!found.pm2 && !pm2Error,
+                // pm2Restarted / pm2Error keep their names for older CLIs; they cover systemd too.
+                runner: runner?.kind ?? "none",
+                pm2Restarted: !!runner && !pm2Error,
                 pm2Error: pm2Error ? (pm2Error.details ?? pm2Error.message) : null,
             }}
         }catch(e:any){
@@ -1431,41 +1480,6 @@ export class DeployerService extends BaseService{
         return "";
     }
 
-    // Absolute path of the pm2 entry point, from package.json "main" (default index.js). Returns
-    // null if package.json can't be read. Mirrors the legacy join so existing starts are unchanged.
-    private static _mainPath(destination: string): string | null {
-        let main: string;
-        try {
-            main = JSON.parse(fs.readFileSync(path.resolve(destination, "package.json"), "utf-8")).main || "index.js";
-        } catch { return null; }
-        if (main.startsWith("./")) main = main.substring(2);
-        return destination.endsWith("/") ? destination + main : destination + "/" + main;
-    }
-
-    // Add --enable-source-maps to pm2's --node-args. If the project already passes --node-args
-    // (either "--node-args=X" or "--node-args" "X"), merge into it instead of adding a second one.
-    private static _withSourceMaps(extra: string[]): string[] {
-        const FLAG = "--enable-source-maps";
-        const has = (v: string) => v.split(/\s+/).includes(FLAG);
-        const inlineIdx = extra.findIndex(a => a.startsWith("--node-args="));
-        if (inlineIdx !== -1) {
-            const val = extra[inlineIdx].slice("--node-args=".length);
-            if (has(val)) return extra;
-            const next = [...extra];
-            next[inlineIdx] = `--node-args=${(val + " " + FLAG).trim()}`;
-            return next;
-        }
-        const splitIdx = extra.findIndex(a => a === "--node-args");
-        if (splitIdx !== -1 && splitIdx + 1 < extra.length) {
-            const val = extra[splitIdx + 1];
-            if (has(val)) return extra;
-            const next = [...extra];
-            next[splitIdx + 1] = (val + " " + FLAG).trim();
-            return next;
-        }
-        return [...extra, `--node-args=${FLAG}`];
-    }
-
     private async _renderNginx(found: IConfig, projectName: string, activePort: string): Promise<IError | null> {
         if (!found.nginx?.config_dir) return null;
         if (!activePort) {
@@ -1513,119 +1527,6 @@ export class DeployerService extends BaseService{
         if (upstreamErr) return upstreamErr;
 
         return null;
-    }
-
-    // The pm2 CLI flags a deploy uses: the slot's own list for blue-green, else the project's.
-    private static _pm2AttributesFor(found: IConfig, projectState?: IProjectState | null): string[] {
-        const slotAttrs = projectState?.lastDeployed === "blue" ? found.bluegreen?.blue_pm2_attributes : found.bluegreen?.green_pm2_attributes;
-        const list = Array.isArray(slotAttrs) ? slotAttrs : found.pm2_attributes;
-        return Array.isArray(list) ? list.filter((s: unknown): s is string => typeof s === "string" && s.length > 0) : [];
-    }
-
-    async runPM2(found: IConfig, projectState?:IProjectState|null):Promise<IError|null> {
-
-        
-        let pm2attrs=projectState?.lastDeployed === "blue" ? found.bluegreen?.blue_pm2_attributes : found.bluegreen?.green_pm2_attributes
-        const pm2Attrs = Array.isArray(pm2attrs) ? pm2attrs.filter(s => typeof s === "string" && s.length > 0) : found.pm2_attributes;
-
-        
-
-        
-        return new Promise((resolve)=>{
-
-            try{
-                // check if pm2 is installed
-                execFileSync("pm2", ["--version"]);
-
-                // Extra CLI flags from the project config (--instances, --node-args=..., -i max, etc.).
-                // Each entry is one CLI token — user provides them pre-split so we don't have to guess
-                // shell-quoting rules. Empty strings filtered out.
-                const rawExtra: string[] = Array.isArray(pm2Attrs)
-                    ? pm2Attrs.filter(s => typeof s === "string" && s.length > 0)
-                    : [];
-
-                // Autorestart guard: pm2 defaults autorestart=true, and our web/monitor restart
-                // relies on it (the process self-exits and expects pm2 to respawn it). Strip any
-                // "--no-autorestart" from the project's pm2 attributes so WE never disable it.
-                const extra = rawExtra.filter(a => !/^--no-autorestart(=.*)?$/.test(a));
-                if (extra.length !== rawExtra.length)
-                    logWarn(`Ignored "--no-autorestart" in pm2 attributes for "${found.name}" — autorestart is force-kept ON so the slot self-recovers.`);
-
-                // Entry point and its sourcemap. A bundle (and any build that emits one) ships
-                // <main>.map next to the entry; node needs --enable-source-maps for stack traces to
-                // point at the original src/ lines. We add it automatically when the map is present.
-                const entryMain = DeployerService._mainPath(found.destination);
-                const hasMap = !!entryMain && fs.existsSync(entryMain + ".map");
-
-                // Preferred path: ecosystem.config.{js,cjs} in the project root.
-                // startOrReload picks up ALL changes (script path, args, exec_mode, cwd, interpreter);
-                // --update-env forces re-read of env vars. Zero-downtime for cluster mode.
-                const ecoJs  = path.resolve(found.destination, "ecosystem.config.js");
-                const ecoCjs = path.resolve(found.destination, "ecosystem.config.cjs");
-                const ecosystem = fs.existsSync(ecoJs) ? ecoJs
-                                : fs.existsSync(ecoCjs) ? ecoCjs
-                                : null;
-
-                if (ecosystem) {
-                    // We can't safely edit the project's own ecosystem file, so we can't inject the
-                    // flag here — tell the operator to add it themselves if a map is present.
-                    if (hasMap)
-                        logInfo(`"${found.name}": a sourcemap ships next to the entry — add node_args:"--enable-source-maps" to ${path.basename(ecosystem)} for src-mapped stack traces`);
-                    execFileSync("pm2", ["startOrReload", ecosystem, "--update-env", ...extra]);
-                    // Ecosystem file may set autorestart:false explicitly — we can't safely override
-                    // a project file from the CLI, so verify and loudly warn if the slot won't recover.
-                    this._verifyAutorestart(found.name);
-                    resolve(null);
-                    return;
-                }
-
-                // Fallback path: legacy projects without an ecosystem file.
-                // We must NOT use `pm2 restart` here — it re-uses the previously-stored exec_path,
-                // so a change in package.json.main is silently ignored. delete+start guarantees
-                // the current entry point is picked up (small ~1s downtime is acceptable).
-                const list = execFileSync("pm2", ["list"]).toString();
-                let running=false;
-                for(let l of list.split("\n")){
-                    if(l.indexOf(found.name) !== -1){
-                        running=true;
-                        break;
-                    }
-                }
-
-                const script = entryMain ?? found.destination + "/index.js";
-
-                if(running){
-                    try { execFileSync("pm2", ["delete", found.name]); } catch {}
-                }
-                // Plain start defaults to autorestart=true (and we stripped any --no-autorestart
-                // from `extra` above), so the slot is guaranteed self-recovering here.
-                // With a sourcemap present, start node with --enable-source-maps (merged into any
-                // --node-args the project already passes).
-                const startExtra = hasMap ? DeployerService._withSourceMaps(extra) : extra;
-                execFileSync("pm2", ["start", script, "--name", found.name, ...startExtra]);
-                this._verifyAutorestart(found.name);
-
-                resolve(null)
-            }catch(e){
-                resolve({code:18,message:"Can't run pm2",details:""+e,httpStatus:500})
-            }
-        })
-    }
-
-    // Best-effort probe: after pm2 start/reload, confirm autorestart is ON for this process.
-    // We can't force-override an ecosystem file's explicit autorestart:false from the CLI, so if
-    // it's off we warn loudly — a disabled slot will NOT come back after a monitor/web restart.
-    private _verifyAutorestart(name:string){
-        try{
-            const list = JSON.parse(execFileSync("pm2", ["jlist"]).toString());
-            const proc = Array.isArray(list) ? list.find((p:any)=>p?.name===name) : null;
-            if(proc?.pm2_env && proc.pm2_env.autorestart === false){
-                logWarn(`pm2 autorestart is DISABLED for "${name}" — the slot will NOT respawn after a restart/exit. Check the project's ecosystem.config (autorestart:false).`);
-            }
-        }catch(e:any){
-            // Verification is diagnostic only; never fail a deploy because jlist couldn't be read.
-            logWarn(`Could not verify pm2 autorestart for "${name}": ${e?.message ?? e}`);
-        }
     }
 
     // Dirs we never descend into: they hold thousands of files, can't legitimately contain
@@ -1816,7 +1717,7 @@ export class DeployerService extends BaseService{
     static MIGRATE_TIMEOUT_MS = 10 * 60 * 1000;
 
     // The deployer's project name is the app's name on the server: written into the deployed
-    // package.json (and its lock), it names the app's data folder /var/bmfk/<name>. One source tree
+    // package.json (and its lock), it names the app's data folder ~/.bmfk/<name>. One source tree
     // can be deployed as several projects — each copy gets its own name. Never fails a deploy.
     static _stampProjectName(dir:string, projectName:string){
         const problem = projectNameProblem(projectName);

@@ -10,17 +10,23 @@ import { projectNameProblem } from "./ConfigService";
 import { askHidden } from "./HashPassword";
 import { palette } from "./cliCommon";
 import { ask, askValid, yes, list } from "./cliPrompt";
+import { allocateId, listUnits, renderUnit, unitName, userUnitDir } from "./SystemdUnit";
+import { realSystemctl } from "./SystemdRunner";
+import { controlSocketPath } from "../control/Control";
+import { Ps } from "./Ps";
 
 // `bmfk deployer-init` — turns an empty folder on the server into a running deployer:
 //   bin/Main.js        the service (public API of @bmfk/api only)
-//   ecosystem.config.cjs   how pm2 runs it
+//   ~/.config/systemd/user/bmfk-<name>.service   how systemd runs it (Linux, the default), or
+//   ecosystem.config.cjs                          how pm2 runs it
 //   package.json           name, main, start script
 //   <setup>/setup.json     who may deploy (mode 600), in the deployer's data folder
 //   <projects>/            where project configs go (bmfk project-config writes them)
 // Run it in the folder where `npm i @bmfk/api` was done. It never overwrites without asking.
 
 export interface IDeployerInitAnswers {
-    name: string;                 // pm2 process name and package.json name; also its data folder
+    name: string;                 // process name and package.json name; also its data folder
+    runner?: "systemd" | "pm2";   // default pm2 (as before 1.2.0)
     port: number;
     baseEndPoint: string;         // "/api/" → deploys go to <domain>/api/pckg/add
     maxArchiveMb: number;
@@ -53,13 +59,13 @@ export function normalizeBase(base: string): string {
 /** The files to write: path relative to the folder (or absolute) → content and mode. */
 export function deployerInitFiles(a: IDeployerInitAnswers, packageJson: string | null): Record<string, { content: string, mode?: number }> {
     const main = `"use strict";
-// The deployer — written by \`bmfk deployer-init\`. It runs under pm2 (ecosystem.config.cjs) as the user
+// The deployer — written by \`bmfk deployer-init\`. It runs under ${a.runner === "systemd" ? `systemd (${unitName(a.name)}, bmfk ps)` : "pm2 (ecosystem.config.cjs)"} as the user
 // that owns the deployed projects. Who may deploy: ${path.join(a.setupPath, "setup.json")}
 // (npx bmfk setup-config ${a.setupPath}); project configs: ${a.projectsPath} (npx bmfk project-config).
-const { APIService, Initializer, LogService, getDefaultOptions, getDefaultLogOptions, LOG_LEVEL } = require("@bmfk/api");
+const { APIService, Initializer, LogService, getDefaultOptions, getDefaultLogOptions, logLine } = require("@bmfk/api");
 
 const logOptions = getDefaultLogOptions();
-logOptions.output = item => console.log(\`\${item.date} \${LOG_LEVEL[item.level]} \${item.text}\`);
+logOptions.output = item => console.log(logLine(item));   // with the level for journald under systemd
 
 Initializer([
     new LogService(logOptions),
@@ -106,17 +112,28 @@ module.exports = {
 
     return {
         "bin/Main.js": { content: main },
-        "ecosystem.config.cjs": { content: ecosystem },
+        ...(a.runner === "systemd" ? {} : { "ecosystem.config.cjs": { content: ecosystem } }),
         "package.json": { content: JSON.stringify(pkg, null, indent) + "\n" },
         [path.join(a.setupPath, "setup.json")]: { content: JSON.stringify(setup, null, 4) + "\n", mode: 0o600 },
     };
+}
+
+/** The deployer's own systemd user unit: no sandbox (see SystemdUnit), restarts always, starts at boot. */
+export function deployerUnit(a: IDeployerInitAnswers, dir: string, node = process.execPath, unitDir = userUnitDir()): { file: string, text?: string, problems?: string[] } {
+    const r = renderUnit({
+        id: allocateId(a.name, listUnits(unitDir)), name: a.name, project: a.name, slot: null, port: String(a.port),
+        workingDirectory: path.resolve(dir), node, entry: path.resolve(dir, "bin", "Main.js"), sourceMaps: false,
+        dataDir: AppData.projectDir(a.name), control: controlSocketPath(a.name, null),
+        settings: { env: { NODE_ENV: "production" } }, deployer: true,
+    });
+    return { file: path.join(unitDir, unitName(a.name)), ...r };
 }
 
 export interface IDeployerFolders { projectsPath: string, setupPath: string, baseEndPoint: string }
 
 /**
  * The folders of a deployer made by deployer-init: read from <dir>/bin/Main.js, else the default
- * /var/bmfk/bmfk-deployer when it exists. Null when neither is found.
+ * <data folder>/bmfk-deployer when it exists. Null when neither is found.
  */
 export function findDeployer(dir: string): IDeployerFolders | null {
     let main = "";
@@ -173,16 +190,29 @@ export async function DeployerInit(args: string[]): Promise<void> {
     const nodeMajor = Number(process.versions.node.split(".")[0]);
     console.log(`  ${nodeMajor >= 24 ? green("✓") : red("✗")} Node.js ${process.versions.node}${nodeMajor >= 24 ? "" : " — @bmfk/api needs 24 or later"}`);
     const pm2 = pm2Version();
-    console.log(`  ${pm2 ? green("✓") : yellow("!")} pm2 ${pm2 ?? "not found — install it: npm i -g pm2"}`);
+    let systemd = false;
+    if (process.platform === "linux") {
+        try { await realSystemctl(["--version"]); await realSystemctl(["is-system-running"]).catch((e: any) => { if (!String(e?.stdout ?? "").trim()) throw e; }); systemd = true; } catch { }
+        console.log(`  ${systemd ? green("✓") : yellow("!")} systemd user manager ${systemd ? "reachable" : "not reachable — log in as this user directly (ssh), not via su/sudo; or use pm2"}`);
+    }
+    console.log(`  ${pm2 ? green("✓") : dim("–")} pm2 ${pm2 ?? (systemd ? "not installed (not needed with systemd)" : "not found — install it: npm i -g pm2")}`);
     const root = AppData.root();
+    try { fs.mkdirSync(root, { recursive: true, mode: 0o700 }); } catch { }
     let rootOk = true;
     try { fs.accessSync(root, fs.constants.W_OK); } catch { rootOk = false; }
-    console.log(`  ${rootOk ? green("✓") : yellow("!")} ${root} ${rootOk ? "writable" : `missing or not writable — create it once: sudo mkdir -p ${root} && sudo chown ${process.env.USER ?? "<this user>"} ${root}`}`);
+    console.log(`  ${rootOk ? green("✓") : yellow("!")} data folder ${root} ${rootOk ? "writable" : "can't be created or written — set BMFK_DATA_DIR to a folder this user owns"}`);
     if (!rootOk && !(await yes("  continue anyway (folders are asked next)?", false))) return;
 
     // ---- the service ----
     console.log(bold("\nThe service"));
-    const name = await askValid("  name (pm2 process, data folder)", "bmfk-deployer", v => projectNameProblem(v));
+    let runner: "systemd" | "pm2" = "pm2";
+    if (systemd)
+        runner = (await askValid("  run it with systemd (starts at boot, bmfk ps) or pm2", "systemd", v => v === "systemd" || v === "pm2" ? null : "systemd or pm2")) as "systemd" | "pm2";
+    else if (!pm2) {
+        console.error(red("✗ neither systemd (user manager) nor pm2 is available to run the deployer."));
+        process.exit(1);
+    }
+    const name = await askValid("  name (process, data folder)", "bmfk-deployer", v => projectNameProblem(v));
     let port = 0;
     for (;;) {
         port = Number(await askValid("  port (local; nginx proxies to it)", String(DEFAULT_PORT), v => /^\d+$/.test(v) && +v > 0 && +v < 65536 ? null : "a port number"));
@@ -215,7 +245,7 @@ export async function DeployerInit(args: string[]): Promise<void> {
         if (bot) telegram = { bot, chat };
     }
 
-    const answers: IDeployerInitAnswers = { name, port, baseEndPoint, maxArchiveMb, projectsPath, setupPath, users, allowedIps, telegram };
+    const answers: IDeployerInitAnswers = { name, runner, port, baseEndPoint, maxArchiveMb, projectsPath, setupPath, users, allowedIps, telegram };
     const pkgFile = path.join(dir, "package.json");
     const files = deployerInitFiles(answers, fs.existsSync(pkgFile) ? fs.readFileSync(pkgFile, "utf-8") : null);
 
@@ -235,10 +265,43 @@ export async function DeployerInit(args: string[]): Promise<void> {
     fs.mkdirSync(projectsPath, { recursive: true, mode: 0o700 });
     console.log(green(`  ✓ ${projectsPath}/`));
 
+    let started = false;
+    if (runner === "systemd") {
+        const unit = deployerUnit(answers, dir);
+        if (!unit.text) {
+            console.error(red(`  ✗ ${unit.problems!.join("; ")}`));
+            process.exit(1);
+        }
+        const same = fs.existsSync(unit.file) && fs.readFileSync(unit.file, "utf-8") === unit.text;
+        if (same) console.log(dim(`  = ${unit.file} (unchanged)`));
+        else if (!fs.existsSync(unit.file) || await yes(`  ${unit.file} exists — replace it?`, false)) {
+            fs.mkdirSync(path.dirname(unit.file), { recursive: true });
+            fs.writeFileSync(unit.file, unit.text, { mode: 0o644 });
+            console.log(green(`  ✓ ${unit.file}`));
+        }
+        await realSystemctl(["daemon-reload"]);
+        if (await yes(`\nStart the deployer now (and at every boot)?`, true)) {
+            try {
+                await realSystemctl(["enable", unitName(name)]);
+                await realSystemctl(["restart", unitName(name)]);
+                started = true;
+                console.log(green(`  ✓ started: ${unitName(name)}`));
+            } catch (e: any) {
+                console.error(red(`  ✗ ${String(e?.stderr || e?.message || e).trim()}`));
+            }
+        }
+        console.log("");
+        await Ps(["startup"]);
+    }
+
     // ---- next ----
     console.log(bold("\nNext"));
-    console.log(`  1. Start it:          ${bold("pm2 start ecosystem.config.cjs && pm2 save")}`);
-    console.log(`                        ${dim("once per server, to start pm2 at boot: pm2 startup (run the command it prints)")}`);
+    if (runner === "systemd")
+        console.log(`  1. ${started ? "Running" : "Start it"}:${started ? "           " : "          "}${bold(started ? `bmfk ps show ${name}` : `systemctl --user enable --now ${unitName(name)}`)}${started ? "" : dim("  (then: bmfk ps show " + name + ")")}`);
+    else {
+        console.log(`  1. Start it:          ${bold("pm2 start ecosystem.config.cjs && pm2 save")}`);
+        console.log(`                        ${dim("once per server, to start pm2 at boot: pm2 startup (run the command it prints)")}`);
+    }
     console.log(`  2. Check it:          curl -s http://127.0.0.1:${port}${baseEndPoint}liveness`);
     console.log(`  3. nginx (TLS site):\n${nginxSnippet(answers).split("\n").map(l => "       " + l).join("\n")}`);
     console.log(`  4. Each project:      npx bmfk project-config  → put the config into ${projectsPath}`);

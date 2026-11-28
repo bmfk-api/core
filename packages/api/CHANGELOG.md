@@ -1,6 +1,129 @@
 # Changelog
 
+## 1.2.0 — 2026-11-28
+
+### Server
+
+- **Data folder: `~/.bmfk/<project>` by default** (was `/var/bmfk/<project>`), so nothing needs sudo and
+  each user's projects stay in that user's home (folders 0700). `/var/bmfk` is still used while it
+  holds a project folder this user can write to — said once at start — and `BMFK_DATA_DIR` still wins.
+  `bmfk data move [--yes]` moves the folders to `~/.bmfk` and leaves a link in place of each, so paths
+  already written into deployed code keep working; deploy each project once afterwards. A user without
+  a home folder keeps `/var/bmfk`.
+- `logLine(item)`: a log item as a stdout line. Under systemd (when stdout goes to the journal) it
+  starts with the level for journald, so `journalctl -p warning` and `bmfk ps log --errors` find
+  warnings and errors. The deployer made by `deployer-init` uses it.
+- Monitor: restart works for an app the deployer runs as a systemd unit, too (it was pm2 only); the
+  confirmation is the process name. The restart now goes through the graceful stop. A new log source
+  `journal` reads the unit's systemd journal.
+- Graceful stop. On SIGTERM or SIGINT (a deploy, `systemctl stop`, `pm2 restart`) the server stops taking
+  connections, closes idle ones, and lets requests in progress finish for up to `shutdownTimeoutMs`
+  (default 10 s); then the rest are cut and the services' `finishService` run, so a database pool is
+  never closed under a running request. A request on a kept-alive connection during the stop gets 503
+  with `Connection: close`. A second signal exits at once. Under pm2 give it time to finish:
+  `--kill-timeout 12000` in the pm2 flags (pm2's own default is 1.6 s).
+- `APIService.addReadinessCheck(name, check)`: what must work for the app to serve (a database, a
+  queue). `GET /readiness` answers 503 while a check fails or the app is stopping, without saying why
+  (it is public); the reasons go to the log, once per change, and to `bmfk ps show`. With no checks
+  nothing changes.
+- Control channel. When the deployer starts an app (systemd or pm2) it passes a unix socket path in
+  `BMFK_CONTROL_SOCKET` (`<data folder>/<project>/control[-<slot>].sock`); the app listens on it, mode
+  0600, so only the same user can connect, and no port is opened. A fixed set of operations: `ping`,
+  `metrics` (requests and 5xx per minute, requests in progress, connections, event loop delay and load,
+  heap), `ready` (the readiness checks with reasons), `refresh-live`, `loglevel`. A change of log level
+  is logged by the app. An app started any other way has no socket.
+
+### Deployer
+
+- `"runner": "systemd"` in a project config runs the app as a systemd user unit,
+  `bmfk-<project>[-<slot>].service` in `~/.config/systemd/user`, instead of pm2. The unit is written
+  on every deploy and restore, enabled (it starts at boot once `loginctl enable-linger` is set for the
+  deployer's user) and restarted; a process that is not still running 3 seconds later fails the
+  deploy. The unit restarts the app whenever it exits, stops it with SIGTERM, and by default keeps it
+  in a sandbox: read-only system and home, private `/tmp`, writable deploy and data folders only.
+  Settings go in a `"systemd"` block (`node_args`, `env`, `memory_max`, `stop_timeout`, `sandbox`); values
+  that would need escaping in a unit file are refused before anything is written.
+- `bmfk ps`: the processes under systemd, pm2-style, straight from systemd (works while the deployer
+  is down). `bmfk ps list` shows id, project, slot, state, pid, uptime, restarts, memory, cpu, port and
+  whether it starts at boot, then pm2's processes if pm2 is there. `bmfk ps log <id|name|all>` with
+  `-f`, `-n`, `--errors`, `--since`; `show`, `start`, `stop` (also keeps it from starting at boot),
+  `restart`. `bmfk ps startup` checks what a start at boot needs (linger, a journal kept on disk, the
+  user's systemd) and prints the commands to fix it; it never runs sudo. Ids are kept in the units and
+  don't change between deploys; a project name means both its slots. `bmfk ps watch [-i 2]` redraws the
+  list until Ctrl+C. `bmfk ps show` adds peak memory, threads and disk read/write (the unit turns on
+  `IOAccounting`; shown where the io controller is delegated to the user).
+- `bmfk ps list` and `watch` add what the apps say over the control channel: requests and 5xx per
+  minute, event loop delay (p99) and heap, in yellow when there are 5xx, the loop stalls (≥ 200 ms) or
+  the heap is over 80 % of its limit; pm2 processes started by the deployer too. `bmfk ps show` adds the
+  version, live or standby, log level, requests in progress, connections and each readiness check with
+  its reason. `bmfk ps loglevel <id|name|all> [level]` shows or changes the log level until the next
+  restart.
+- A switch of blue-green slots tells both slots over their control sockets at once; each asks the
+  deployer for its state, so `APIService.onLiveChange` (crons, queue consumers) follows within a
+  second instead of at the next poll. Slots without the channel catch up as before.
+- `systemd.memory_high`: above it the app is slowed down and pushed to free memory (`MemoryHigh`), before
+  `memory_max` kills it; it must be below `memory_max`.
+- Watchdog: processes under systemd are checked every 10 seconds. A crash that systemd restarted, a
+  crash loop (systemd gave up) and a recovery go to Telegram and the project's emails. Restarts are
+  reported at most once per process per 5 minutes, with the count. `bmfk ps stop` is not reported.
+- `bmfk deployer-init` on Linux runs the deployer as a systemd user unit by default (pm2 on request, or
+  where systemd's user manager isn't reachable): it writes `bmfk-<name>.service`, starts and enables it,
+  and runs `bmfk ps startup`. The deployer's own unit has no sandbox and no `NoNewPrivileges`, since it
+  writes the projects' folders and nginx files and its switch hook may use sudo. pm2 is no longer
+  needed with systemd.
+- `bmfk ps startup` also checks user namespaces, which the units' sandbox needs, and warns when
+  AppArmor restricts them.
+- pm2 stays: without `"runner"`, `"pm2": true` still means pm2 and `"pm2": false` starts nothing.
+  `"runner": "none"` is the same as `"pm2": false`.
+
 ## 1.1.1 — 2026-11-27
+
+Fixes from a security review of 1.1.0.
+
+### Breaking
+
+- Monitor: a user without a role (or with an unknown one) gets no access. It used to get `admin`. Set
+  `role` (`admin`, `it`, `analytic`) on every monitor user; the service names the users without one at
+  startup, and `npx bmfk access-config` shows them as "no role — no access".
+
+### Security
+
+- SQL kept for diagnostics — the longest queries in the monitor's database panel, transaction failure
+  reports, `debug` query logs — is masked: values of columns with a sensitive name (password, token,
+  cvv, pan, card_number, exp, …) in `col = value` and `(cols) VALUES (…)`, and card numbers anywhere
+  (Luhn). `LogService.sanitizeSql()` does it.
+- Failed sign-ins (monitor, documentation, deploy review): the counters are bounded (10 000 logins) and
+  forget failures older than the lockout time, so sign-ins with random logins can't grow memory. A
+  locked login stays locked.
+- `host` option: the address to listen on (`"127.0.0.1"` behind nginx on the same machine). Without it
+  the service listens on every interface, as before, and says so at startup. `bmfk deployer-init` writes
+  `host: "127.0.0.1"` for the deployer.
+- Deploy review: a journal entry that can't be written goes to the log in full, instead of being dropped.
+
+- `InterceptorPayAuth`: the result (`req.interceptorResult`, which the request log records) no longer
+  contains the shared key — everything of the key entry but `key`. The log masks fields named `key`,
+  `secretKey`, `hmacKey`, `sharedKey`, `signingKey` too. If PayAuth ran with real keys and the request log
+  was on, replace those keys: they could be read in the monitor's log by the `it` and `admin` roles.
+- `InterceptorSignedAuth`: two copies of one request checked at the same time could both pass (the nonce
+  was recorded after the asynchronous checks). A nonce is now held while its check runs, and used nonces
+  are shared by every instance in the process.
+- `InterceptorSignedAuth`: a form field with several files is refused — only one file's hash per field was
+  signed, while the handler got them all. File names and MIME types are not signed: don't trust them.
+- Deploy review: an upload in the moment between the approval and the start of the deploy could replace
+  the approved archive, and the new one was deployed. The project now stays busy from the approval on,
+  and only the archive with the approved hash is deployed.
+- Deploy review: an unreadable or damaged reviewers' 2FA file refuses sign-in (and says so in the log)
+  instead of offering a new enrollment that would overwrite it.
+- API documentation page: served by the API, it signs in only to its own origin; `?host=` (which could send
+  the password and code to another server) is ignored there. The page is sent with a Content-Security-Policy
+  (`connect-src 'self'`).
+- `REQ_DB` with `throwable`: the database's message (tables, constraints, values) no longer goes into the
+  error's `details`, which the client gets; it is logged and kept in the stack (dropped in production).
+- Deploy: `host`, `switch_host` in `deploy.json` and `review_url` in `setup.json` must be https; http only to
+  localhost (an SSH tunnel).
+- Deploy with `secrets`: a config value that would be written into the code (an ES module project, a
+  placeholder outside a quoted string in a CommonJS `.js`/`.cjs`) stops the deploy instead of a warning —
+  it would also land in every backup.
 
 ### Deployer
 

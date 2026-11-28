@@ -94,7 +94,7 @@ export class MonitorService extends BaseService {
 			: MonitorService.defaultDir();
 		setInterval(() => this.collectUsage(), this.intervalMs);
 	}
-	// /var/bmfk/<project>/metrics; beside the code when /var/bmfk can't be created (said at startup).
+	// <data folder>/<project>/metrics; beside the code when it can't be created (said at startup).
 	private static defaultDir(): string {
 		const dir = AppData.dir("metrics");
 		if (dir) return dir;

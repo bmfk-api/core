@@ -4,7 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { spawn } from "child_process";
-import { deployerInitFiles, findDeployer, nginxSnippet, normalizeBase, publicKeyProblem, IDeployerInitAnswers } from "../src/apiServer/deployment/DeployerInit";
+import { deployerUnit, deployerInitFiles, findDeployer, nginxSnippet, normalizeBase, publicKeyProblem, IDeployerInitAnswers } from "../src/apiServer/deployment/DeployerInit";
 import { InterceptorSignedAuth } from "../src/apiServer/interceptors/InterceptorSignedAuth";
 import { exitWhenDone, waitFor } from "./helpers";
 
@@ -85,4 +85,25 @@ test("the generated deployer starts, reads its setup.json and refuses unsigned d
     } finally {
         child.kill();
     }
+});
+
+test("deployer-init with systemd: a unit without sandbox (it writes the projects), started at boot; no pm2 file", () => {
+    const unitDir = fs.mkdtempSync(path.join(os.tmpdir(), "units-"));
+    const a: IDeployerInitAnswers = {
+        name: "bmfk-deployer", runner: "systemd", port: 9915, baseEndPoint: "/api/", maxArchiveMb: 100,
+        projectsPath: "/home/deploy/.bmfk/bmfk-deployer/projects", setupPath: "/home/deploy/.bmfk/bmfk-deployer/setup",
+        users: [{ login: "ci", publicKey: keys.publicKey }], allowedIps: [],
+    };
+    const u = deployerUnit(a, "/home/deploy/deployer", "/usr/bin/node", unitDir);
+    assert.equal(u.file, path.join(unitDir, "bmfk-bmfk-deployer.service"));
+    const lines = u.text!.split("\n");
+    for (const l of ["ExecStart=/usr/bin/node /home/deploy/deployer/bin/Main.js", "WorkingDirectory=/home/deploy/deployer",
+        "X-Bmfk-Role=deployer", "X-Bmfk-Port=9915", 'Environment="NODE_ENV=production"', "Restart=always", "WantedBy=default.target"])
+        assert.ok(lines.includes(l), l);
+    assert.ok(!u.text!.includes("NoNewPrivileges"));     // its switch hook may use sudo
+    assert.ok(!u.text!.includes("ProtectSystem"));
+    const files = deployerInitFiles(a, null);
+    assert.equal(files["ecosystem.config.cjs"], undefined);
+    assert.match(files["bin/Main.js"].content, /runs under systemd \(bmfk-bmfk-deployer\.service/);
+    assert.ok(deployerInitFiles({ ...a, runner: "pm2" }, null)["ecosystem.config.cjs"]);
 });

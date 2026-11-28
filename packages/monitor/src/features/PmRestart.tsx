@@ -67,8 +67,12 @@ interface IProps {
 
 export const PmRestart = ({ data }: IProps) => {
 	const pm2 = data.identity.pm2;
-	const managed = pm2?.managed === true;
-	const name = pm2?.name ?? "";
+	// What starts the process again: the deployer's systemd unit or pm2. Servers before 1.2.0 send only pm2.
+	const sup = data.identity.supervisor ?? (pm2?.managed ? { kind: "pm2" as const, managed: true, name: pm2.name, unit: null, pmId: pm2.pmId } : null);
+	const managed = sup?.managed === true;
+	const systemd = sup?.kind === "systemd";
+	const name = sup?.name ?? "";
+	const respawner = systemd ? "systemd" : "pm2 autorestart";
 	const currentPid = data.identity.pid;
 	const currentUptime = data.identity.uptimeSec;
 	const isAdmin = can("admin");
@@ -206,14 +210,20 @@ export const PmRestart = ({ data }: IProps) => {
 		<VBox sx={{ gap: "14px" }}>
 			<HBox sx={{ gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
 				<Typo variant="headMedium">Process management</Typo>
-				{managed ? <Chip tone="ok">pm2 managed</Chip> : <Chip tone="warn">not under pm2</Chip>}
+				{managed ? <Chip tone="ok">{systemd ? "systemd unit" : "pm2 managed"}</Chip> : <Chip tone="warn">not supervised</Chip>}
 				{phase === "waiting" && <Chip tone="muted">restarting…</Chip>}
 				{phase === "restarting" && <Chip tone="muted">sending…</Chip>}
 				{phase === "done" && <Chip tone="ok">restarted ✓</Chip>}
 				{phase === "timeout" && <Chip tone="fail">timed out</Chip>}
 			</HBox>
 
-			{managed ? (
+			{managed && systemd ? (
+				<HBox sx={{ gap: "20px", flexWrap: "wrap" }}>
+					<Metric label="name" value={name || "—"} color={ACCENT} />
+					<Metric label="unit" value={sup?.unit ?? "—"} />
+					<Metric label="pid" value={currentPid} />
+				</HBox>
+			) : managed ? (
 				<HBox sx={{ gap: "20px", flexWrap: "wrap" }}>
 					<Metric label="pm2 name" value={pm2?.name ?? "—"} color={ACCENT} />
 					<Metric label="pm2 id" value={pm2?.pmId ?? "—"} />
@@ -222,8 +232,8 @@ export const PmRestart = ({ data }: IProps) => {
 				</HBox>
 			) : (
 				<Label sx={{ fontSize: ".78rem" }}>
-					This process has no pm2 pm_id in its environment — restarting from the UI is disabled because
-					nothing would bring it back up.
+					Neither the deployer's systemd unit nor pm2 runs this process — restarting from the UI is disabled
+					because nothing would bring it back up.
 				</Label>
 			)}
 
@@ -257,7 +267,7 @@ export const PmRestart = ({ data }: IProps) => {
 
 				{phase === "waiting" && (
 					<Label sx={{ fontSize: ".76rem" }}>
-						Waiting for process to come back up… (pm2 autorestart)
+						Waiting for process to come back up… ({respawner})
 					</Label>
 				)}
 				{phase === "done" && lastRestartBy && (
@@ -268,7 +278,7 @@ export const PmRestart = ({ data }: IProps) => {
 				)}
 				{phase === "timeout" && (
 					<Label sx={{ fontSize: ".76rem", color: FAIL }}>
-						Process didn't come back within {Math.round(TIMEOUT_MS / 1000)} s — check pm2 autorestart.
+						Process didn't come back within {Math.round(TIMEOUT_MS / 1000)} s — {systemd ? "see: bmfk ps log " + name : "check pm2 autorestart"}.
 					</Label>
 				)}
 			</HBox>
@@ -276,8 +286,8 @@ export const PmRestart = ({ data }: IProps) => {
 
 			{isAdmin && (
 				<Label sx={{ fontSize: ".7rem", opacity: 0.8 }}>
-					Relies on pm2 autorestart. Restart briefly interrupts traffic — for blue-green setups, prefer
-					restarting the inactive slot.
+					Relies on {respawner}. Requests in progress finish first; new ones are refused for a few seconds — for
+					blue-green setups, prefer restarting the inactive slot.
 				</Label>
 			)}
 
@@ -286,11 +296,11 @@ export const PmRestart = ({ data }: IProps) => {
 					<VBox sx={{ gap: "16px" }}>
 						<VBox sx={{ gap: "6px" }}>
 							<Typo variant="medium">
-								You are about to restart the pm2 process{" "}
+								You are about to restart the {systemd ? "process" : "pm2 process"}{" "}
 								<Typo variant="medium" sx={{ fontFamily: "monospace", color: ACCENT, display: "inline" }}>
 									{name}
 								</Typo>
-								{pm2?.pmId != null && (
+								{!systemd && pm2?.pmId != null && (
 									<Typo variant="medium" sx={{ opacity: 0.8, display: "inline" }}>
 										{" "}
 										(id {pm2.pmId})
@@ -299,14 +309,14 @@ export const PmRestart = ({ data }: IProps) => {
 								.
 							</Typo>
 							<Label sx={{ fontSize: ".76rem" }}>
-								This will briefly interrupt in-flight requests. pm2 autorestart will bring the
-								process back within a few seconds.
+								Requests in progress finish first, then it stops; {respawner} brings it back within a few
+								seconds.
 							</Label>
 						</VBox>
 
 						<VBox sx={{ gap: "6px" }}>
 							<Label>
-								To confirm, type the pm2 process name:{" "}
+								To confirm, type the process name:{" "}
 								<Typo variant="medium" sx={{ fontFamily: "monospace", color: ACCENT, display: "inline" }}>
 									{name}
 								</Typo>

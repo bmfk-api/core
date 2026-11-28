@@ -36,7 +36,7 @@ export class SecretsInjector {
             target = path.join(dir, `${project}${slot ? "-" + slot : ""}.json`);
         } else {
             // Default: the project's data folder, next to its metrics and threats —
-            // /var/bmfk/<project>/secrets[-<slot>].json. The deployer and the apps run as one user.
+            // <data folder>/<project>/secrets[-<slot>].json. The deployer and the apps run as one user.
             target = path.join(AppData.projectDir(project), `secrets${slot ? "-" + slot : ""}.json`);
         }
         target = path.resolve(target);

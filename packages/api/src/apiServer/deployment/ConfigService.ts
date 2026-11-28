@@ -63,6 +63,27 @@ const _TConfig={
     pm2:true,
     pm2_attributes:[""],
     $__pm2_attributes_optional:true,
+    // What runs the app: "pm2", "systemd" (a user unit per project or slot, started at boot) or
+    // "none". Absent: "pm2" when pm2 is true, else "none".
+    runner:"",
+    $__runner_values:["pm2","systemd","none"],
+    $__runner_optional:true,
+    // Settings of the systemd runner (checked by settingsProblems in SystemdUnit.ts).
+    systemd:{
+        node_args:[""],
+        $__node_args_optional:true,
+        env:{},
+        $__env_optional:true,
+        memory_high:"",
+        $__memory_high_optional:true,
+        memory_max:"",
+        $__memory_max_optional:true,
+        stop_timeout:15,
+        $__stop_timeout_optional:true,
+        sandbox:true,
+        $__sandbox_optional:true,
+    },
+    $__systemd_optional:true,
     chmod:0,
     $__chmod_optional:true,
     email:[""],
@@ -126,7 +147,7 @@ const _TConfig={
 
     // Keep config values out of the deployed code: they go to a secrets file outside the deploy
     // folder ({dir} → <dir>/<project>[-<slot>].json, or {file}; {} uses secrets_dir from the
-    // deployer's setup.json, or /var/bmfk/<project>/secrets[-<slot>].json when that is unset), and
+    // deployer's setup.json, or <data folder>/<project>/secrets[-<slot>].json when that is unset), and
     // quoted "_{{KEY}}_" in .js files become a read of that file.
     secrets:{
         dir:"",
@@ -140,7 +161,7 @@ const _TConfig={
 
 export type IConfig = ValidationModel<typeof _TConfig>
 
-// The project name ends up in a package.json "name", in /var/bmfk/<name>, in state, backup and
+// The project name ends up in a package.json "name", in the data folder <root>/<name>, in state, backup and
 // secrets file names — so it must be valid as all of them (the rule is in ConfigRules, shared with the site).
 export { projectNameProblem };
 // The project config schema, for tools that build or check configs (e.g. `bmfk project-config`).

@@ -1,5 +1,6 @@
-// Tail of on-disk logs for the monitor: this process's pm2 stdout/stderr files ("pm2 logs") and,
-// optionally, nginx access/error logs.
+// Tail of logs for the monitor: this process's own output — the systemd journal of its unit when the
+// deployer runs it under systemd, or pm2's stdout/stderr files ("pm2 logs") — and, optionally, nginx
+// access/error logs.
 //
 // Safety rules:
 //   - The client picks a SOURCE ID, never a path. Paths come from pm2's env or from server-side
@@ -10,10 +11,12 @@
 //   - `filter` is applied AFTER masking, so it can't be used to probe for secret values.
 
 import fs from "fs/promises";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { constants as FS } from "fs";
 import { LogService } from "../LogService";
 
-export const LOG_SOURCES = ["process-out", "process-err", "nginx-access", "nginx-error"] as const;
+export const LOG_SOURCES = ["journal", "process-out", "process-err", "nginx-access", "nginx-error"] as const;
 export type TLogSourceId = typeof LOG_SOURCES[number];
 
 export interface ILogFilesOptions {
@@ -40,6 +43,7 @@ export interface ILogTailResult {
 }
 
 const LABELS: Record<TLogSourceId, string> = {
+    "journal": "Process log (systemd journal)",
     "process-out": "Process stdout (pm2 out log)",
     "process-err": "Process stderr (pm2 error log)",
     "nginx-access": "nginx access log",
@@ -50,9 +54,16 @@ const MAX_WINDOW = 512 * 1024;   // bytes read per call at most
 const MAX_LINE = 4000;           // chars per returned line
 const MAX_LINES = 2000;
 
+// The unit this process runs as, when the deployer started it under systemd (see SystemdUnit).
+export function ownUnit(env: NodeJS.ProcessEnv = process.env): string | null {
+    const u = env.BMFK_UNIT;
+    return env.INVOCATION_ID && u && /^bmfk-[a-z0-9][a-z0-9._-]*\.service$/.test(u) ? u : null;
+}
+
 function resolvePaths(opts?: ILogFilesOptions): Record<TLogSourceId, string | null> {
     const usable = (p?: string | null) => (p && p !== "/dev/null" ? p : null);  // pm2 --no-*-log → /dev/null
     return {
+        "journal": ownUnit(),
         "process-out": usable(opts?.processOut) ?? usable(process.env.pm_out_log_path),
         "process-err": usable(opts?.processErr) ?? usable(process.env.pm_err_log_path),
         "nginx-access": usable(opts?.nginxAccess),
@@ -75,7 +86,9 @@ export async function listLogSources(opts?: ILogFilesOptions) {
         const path = paths[id];
         const base = { id, label: LABELS[id], path, configured: !!path, exists: false, readable: false,
                        size: null as number | null, modifiedAt: null as number | null, reason: null as string | null };
-        if (!path) return { ...base, reason: id.startsWith("process") ? "not running under pm2 and no path configured" : "path not configured (options.logFiles)" };
+        if (!path) return { ...base, reason: id === "journal" ? "not running as the deployer's systemd unit"
+            : id.startsWith("process") ? "not running under pm2 and no path configured" : "path not configured (options.logFiles)" };
+        if (id === "journal") return { ...base, exists: true, readable: true };
         try {
             const st = await fs.stat(path);
             base.exists = true; base.size = st.size; base.modifiedAt = st.mtimeMs;
@@ -94,6 +107,7 @@ export async function listLogSources(opts?: ILogFilesOptions) {
 export async function tailLog(id: TLogSourceId, opts: ILogFilesOptions | undefined, req: ILogTailRequest = {}): Promise<ILogTailResult> {
     const path = resolvePaths(opts)[id];
     if (!path) throw new Error(`log source "${id}" is not configured`);
+    if (id === "journal") return tailJournal(path, req);
 
     const wantLines = Math.min(MAX_LINES, Math.max(1, Math.floor(req.lines ?? 200)));
     const fh = await fs.open(path, "r");
@@ -137,4 +151,37 @@ export async function tailLog(id: TLogSourceId, opts: ILogFilesOptions | undefin
     } finally {
         await fh.close();
     }
+}
+
+const execFileAsync = promisify(execFile);
+
+// One journal entry (journalctl -o json) → "time LEVEL message", or null.
+const PRIO = ["EMERG", "ALERT", "CRIT", "ERROR", "WARN", "NOTICE", "INFO", "DEBUG"];
+export function journalEntry(json: string): { us: number; line: string } | null {
+    let e: any;
+    try { e = JSON.parse(json); } catch { return null; }
+    const us = Number(e.__REALTIME_TIMESTAMP);
+    if (!Number.isFinite(us)) return null;
+    const msg = Array.isArray(e.MESSAGE) ? Buffer.from(e.MESSAGE).toString("utf-8") : String(e.MESSAGE ?? "");
+    const prio = PRIO[Number(e.PRIORITY)] ?? "INFO";
+    return { us, line: `${new Date(us / 1000).toISOString().replace("T", " ").slice(0, 23)} ${prio.padEnd(5)} ${msg}` };
+}
+
+// The unit's journal. The cursor is the time (µs) of the last line given: the next call asks from
+// that second on and drops what it already gave. `size` has no meaning here and is 0.
+async function tailJournal(unit: string, req: ILogTailRequest): Promise<ILogTailResult> {
+    const wantLines = Math.min(MAX_LINES, Math.max(1, Math.floor(req.lines ?? 200)));
+    const since = typeof req.since === "number" && Number.isFinite(req.since) && req.since > 0 ? Math.floor(req.since) : null;
+    const args = ["-o", "json", "--no-pager", `--user-unit=${unit}`, "-n", String(since ? MAX_LINES : wantLines),
+        ...(since ? [`--since=@${Math.floor(since / 1e6)}`] : [])];
+    const r = await execFileAsync("journalctl", args, { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+    let entries = String(r.stdout).split("\n").map(journalEntry).filter((e): e is { us: number; line: string } => !!e);
+    if (since) entries = entries.filter(e => e.us > since);
+    let lines = entries.map(e => cleanLine(e.line));
+    const cursor = entries.length ? entries[entries.length - 1].us : (since ?? 0);
+    const filter = typeof req.filter === "string" ? req.filter.trim().toLowerCase() : "";
+    if (filter) lines = lines.filter(l => l.toLowerCase().includes(filter));
+    const truncated = lines.length > wantLines;
+    if (truncated) lines = lines.slice(-wantLines);
+    return { source: "journal", path: unit, size: 0, cursor, rotated: false, truncated, lines };
 }

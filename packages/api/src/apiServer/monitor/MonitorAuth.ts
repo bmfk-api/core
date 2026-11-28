@@ -81,7 +81,7 @@ export class MonitorAuth {
         else if (authDir && authDir.length > 0)
             MonitorAuth.authFile = path.join(authDir, `monitor-2fa.${MonitorAuth.fileSafe(project ?? "")}.json`);
         else {
-            // Default: /var/bmfk/<project>/monitor-2fa.json (null — memory only — when it can't be created).
+            // Default: <data folder>/<project>/monitor-2fa.json (null — memory only — when it can't be created).
             const dir = AppData.dir("");
             MonitorAuth.authFile = dir ? path.join(dir, "monitor-2fa.json") : null;
         }

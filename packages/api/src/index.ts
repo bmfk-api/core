@@ -23,7 +23,7 @@ export { InterceptorPayAuth } from "./apiServer/interceptors/InterceptorPayAuth"
 export type { IPayAuthKey } from "./apiServer/interceptors/InterceptorPayAuth";
 
 // Logging and tracing
-export { LogService, LOG_LEVEL, getDefaultLogOptions, logInfo, logWarn, logError, logCrit, logDB, logAPI, S_LOG, REQ_LOG } from "./apiServer/LogService";
+export { LogService, LOG_LEVEL, getDefaultLogOptions, logLine, logInfo, logWarn, logError, logCrit, logDB, logAPI, S_LOG, REQ_LOG } from "./apiServer/LogService";
 export type { ILogItem, ILogServiceOptions } from "./apiServer/LogService";
 export { Trace, TRACE_HEADER } from "./apiServer/helper/Trace";
 

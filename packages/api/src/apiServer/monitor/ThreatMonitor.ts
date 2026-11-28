@@ -6,7 +6,7 @@
 // tooling such as fail2ban can act on, if anyone decides to. Normal traffic scores 0 and is never
 // stored, so memory is bounded by suspicious addresses only.
 //
-// Kept across restarts in /var/bmfk/<project>/threats.json (addresses, user agents, sanitized URLs —
+// Kept across restarts in <data folder>/<project>/threats.json (addresses, user agents, sanitized URLs —
 // never bodies): saved every minute when something changed and on shutdown, by the live process only.
 
 import fs from "fs";
