@@ -197,7 +197,9 @@ export class InterceptorPayAuth implements IInterceptor<any> {
 								InterceptorPayAuth.warnedV1.add(i.kid);
 								logWarn(`InterceptorPayAuth: "${i.kid}" signs with PayAuth v1 — move it to v2 (InterceptorPayAuth.sign()), then set v1: false on its key`);
 							}
-							return i;
+							// Becomes req.interceptorResult, which is logged: everything but the secret.
+							const { key: _secret, ...result } = i;
+							return result;
 						}
 						// Never echo the expected signature — that would hand out a valid one.
 						throw { ...DefaultErrors.UNAUTHORIZED, details: "Signature mismatch" }

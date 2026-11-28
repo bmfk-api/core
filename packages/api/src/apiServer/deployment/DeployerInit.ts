@@ -71,6 +71,7 @@ Initializer([
     new LogService(logOptions),
     new APIService(getDefaultOptions({
         port: ${a.port},
+        host: "127.0.0.1",                            // nginx on this machine proxies to it
         baseEndPoint: ${JSON.stringify(a.baseEndPoint)},
         projectName: ${JSON.stringify(a.name)},
         fileLimit: ${a.maxArchiveMb} * 1024 * 1024,   // the largest deploy archive accepted

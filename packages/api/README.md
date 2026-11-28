@@ -193,10 +193,12 @@ nonce replay protection:
   `b64` field for a client. Version 1 (`b64 + ts + nonce`) is still accepted for existing clients and
   logs a warning; turn it off per key once a client has moved: `{ kid, key, v1: false }`. Nonces and
   signatures are remembered across all endpoints for the whole window, so an accepted request can't
-  be sent again, to any endpoint. If a proxy rewrites the path, sign the path the server sees.
+  be sent again, to any endpoint. If a proxy rewrites the path, sign the path the server sees. The
+  result is the key entry without `key`: give each entry the attributes your handlers need.
 - **`InterceptorSignedAuth`** uses Ed25519 key pairs. The caller keeps the private key, and the
   server stores only public keys, so nothing on the server can be stolen and reused. The signature
-  covers the method, path, timestamp, nonce, every field and the sha256 of every uploaded file.
+  covers the method, path, timestamp, nonce, every field and the sha256 of every uploaded file (one
+  file per field; file names and MIME types are not signed).
 
 ```ts
 import { InterceptorSignedAuth } from "@bmfk/api";
@@ -416,6 +418,8 @@ access: {
 monitorAuthDir: "/var/lib/my-service",   // where 2FA enrollments are kept
 ```
 
+- **Every user needs a role.** A user without `role` (or with an unknown one) can sign in but reaches
+  nothing; the service warns about such users when it loads the access file.
 - **Passwords must be stored as hashes.** Generate one with `npx bmfk hash-password`. The command
   asks for the password interactively and prints the config entry. A plain-text password in the config
   is refused.
@@ -1225,6 +1229,7 @@ What has to survive restarts and deploys lives in one folder per project, outsid
 | Option | Default | Description |
 |---|---|---|
 | `port` | `8080` | HTTP port |
+| `host` | every interface | address to listen on: `"127.0.0.1"` when nginx on the same machine proxies to it; without it a warning is logged at startup |
 | `baseEndPoint` | `"/api/"` | prefix for all endpoints |
 | `projectName` | `"Application project"` | shown in the monitor and as the 2FA issuer, so set it |
 | `endpoints` | `[]` | your `BaseEndpoint` instances |

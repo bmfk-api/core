@@ -39,8 +39,10 @@ export class InterceptorSignedAuth implements IInterceptor<ISignedAuthResult> {
     private static readonly NONCE_MAX = 100_000;
 
     // kid:nonce → epoch ms after which it may be forgotten. Same TTL for all, so insertion order
-    // is expiry order.
-    private nonceSeen = new Map<string, number>();
+    // is expiry order. Shared by every instance in the process.
+    private static nonceSeen = new Map<string, number>();
+    // Nonces whose check is still running (key lookup, file hashing): a parallel copy is refused.
+    private static nonceChecking = new Set<string>();
 
     // resolveKey(kid) → that key's public key (base64 SPKI), or null when the kid is unknown.
     constructor(private resolveKey: (kid: string) => Promise<string | null | undefined> | string | null | undefined) {}
@@ -68,10 +70,19 @@ export class InterceptorSignedAuth implements IInterceptor<ISignedAuthResult> {
         if (delta < -InterceptorSignedAuth.TS_PAST_SEC || delta > InterceptorSignedAuth.TS_FUTURE_SEC)
             return { present: true, error: `ts out of window: off by ${delta}s — check the client's clock` };
 
-        this.purge(now);
+        InterceptorSignedAuth.purge(now);
         const nonceKey = p.kid + ":" + p.nonce;
-        if (this.nonceSeen.has(nonceKey)) return { present: true, error: "nonce already used (replayed request)" };
+        if (InterceptorSignedAuth.nonceSeen.has(nonceKey) || InterceptorSignedAuth.nonceChecking.has(nonceKey))
+            return { present: true, error: "nonce already used (replayed request)" };
+        InterceptorSignedAuth.nonceChecking.add(nonceKey);
+        try {
+            return await this.check(req, p, now, nonceKey);
+        } finally {
+            InterceptorSignedAuth.nonceChecking.delete(nonceKey);
+        }
+    }
 
+    private async check(req: IRequest, p: Record<string, string>, now: number, nonceKey: string): Promise<ISignedAuthVerdict> {
         const publicKey = await this.resolveKey(p.kid);
         if (!publicKey) return { present: true, error: `unknown key id "${p.kid}"` };
 
@@ -83,6 +94,8 @@ export class InterceptorSignedAuth implements IInterceptor<ISignedAuthResult> {
         const path = InterceptorSignedAuth.pathOf(raw.originalUrl ?? raw.url ?? req.endpoint ?? "");
         const files: Record<string, string> = {};
         for (const [field, f] of Object.entries((raw.files ?? {}) as Record<string, any>)) {
+            // One hash per field is signed, so one file per field: the handler would get every file.
+            if (Array.isArray(f) && f.length !== 1) return { present: true, error: `field "${field}" holds ${f.length} files — one file per field` };
             const one = Array.isArray(f) ? f[0] : f;
             files[field] = await InterceptorSignedAuth.hashUpload(one);
         }
@@ -94,16 +107,17 @@ export class InterceptorSignedAuth implements IInterceptor<ISignedAuthResult> {
         if (!ok) return { present: true, error: "signature does not match (wrong key, or the request was changed)" };
 
         // Burnt only after a valid signature: otherwise anyone could spend a client's nonce.
-        this.nonceSeen.set(nonceKey, now + (InterceptorSignedAuth.TS_PAST_SEC + InterceptorSignedAuth.TS_FUTURE_SEC) * 1000);
+        InterceptorSignedAuth.nonceSeen.set(nonceKey, now + (InterceptorSignedAuth.TS_PAST_SEC + InterceptorSignedAuth.TS_FUTURE_SEC) * 1000);
         return { present: true, kid: p.kid };
     }
 
-    private purge(now: number) {
-        for (const [k, exp] of this.nonceSeen) { if (exp > now) break; this.nonceSeen.delete(k); }
-        while (this.nonceSeen.size > InterceptorSignedAuth.NONCE_MAX) {
-            const oldest = this.nonceSeen.keys().next().value;
+    private static purge(now: number) {
+        const seen = InterceptorSignedAuth.nonceSeen;
+        for (const [k, exp] of seen) { if (exp > now) break; seen.delete(k); }
+        while (seen.size > InterceptorSignedAuth.NONCE_MAX) {
+            const oldest = seen.keys().next().value;
             if (oldest === undefined) break;
-            this.nonceSeen.delete(oldest);
+            seen.delete(oldest);
         }
     }
 

@@ -76,6 +76,62 @@
 - pm2 stays: without `"runner"`, `"pm2": true` still means pm2 and `"pm2": false` starts nothing.
   `"runner": "none"` is the same as `"pm2": false`.
 
+## 1.1.1 — 2026-11-27
+
+Fixes from a security review of 1.1.0.
+
+### Breaking
+
+- Monitor: a user without a role (or with an unknown one) gets no access. It used to get `admin`. Set
+  `role` (`admin`, `it`, `analytic`) on every monitor user; the service names the users without one at
+  startup, and `npx bmfk access-config` shows them as "no role — no access".
+
+### Security
+
+- SQL kept for diagnostics — the longest queries in the monitor's database panel, transaction failure
+  reports, `debug` query logs — is masked: values of columns with a sensitive name (password, token,
+  cvv, pan, card_number, exp, …) in `col = value` and `(cols) VALUES (…)`, and card numbers anywhere
+  (Luhn). `LogService.sanitizeSql()` does it.
+- Failed sign-ins (monitor, documentation, deploy review): the counters are bounded (10 000 logins) and
+  forget failures older than the lockout time, so sign-ins with random logins can't grow memory. A
+  locked login stays locked.
+- `host` option: the address to listen on (`"127.0.0.1"` behind nginx on the same machine). Without it
+  the service listens on every interface, as before, and says so at startup. `bmfk deployer-init` writes
+  `host: "127.0.0.1"` for the deployer.
+- Deploy review: a journal entry that can't be written goes to the log in full, instead of being dropped.
+
+- `InterceptorPayAuth`: the result (`req.interceptorResult`, which the request log records) no longer
+  contains the shared key — everything of the key entry but `key`. The log masks fields named `key`,
+  `secretKey`, `hmacKey`, `sharedKey`, `signingKey` too. If PayAuth ran with real keys and the request log
+  was on, replace those keys: they could be read in the monitor's log by the `it` and `admin` roles.
+- `InterceptorSignedAuth`: two copies of one request checked at the same time could both pass (the nonce
+  was recorded after the asynchronous checks). A nonce is now held while its check runs, and used nonces
+  are shared by every instance in the process.
+- `InterceptorSignedAuth`: a form field with several files is refused — only one file's hash per field was
+  signed, while the handler got them all. File names and MIME types are not signed: don't trust them.
+- Deploy review: an upload in the moment between the approval and the start of the deploy could replace
+  the approved archive, and the new one was deployed. The project now stays busy from the approval on,
+  and only the archive with the approved hash is deployed.
+- Deploy review: an unreadable or damaged reviewers' 2FA file refuses sign-in (and says so in the log)
+  instead of offering a new enrollment that would overwrite it.
+- API documentation page: served by the API, it signs in only to its own origin; `?host=` (which could send
+  the password and code to another server) is ignored there. The page is sent with a Content-Security-Policy
+  (`connect-src 'self'`).
+- `REQ_DB` with `throwable`: the database's message (tables, constraints, values) no longer goes into the
+  error's `details`, which the client gets; it is logged and kept in the stack (dropped in production).
+- Deploy: `host`, `switch_host` in `deploy.json` and `review_url` in `setup.json` must be https; http only to
+  localhost (an SSH tunnel).
+- Deploy with `secrets`: a config value that would be written into the code (an ES module project, a
+  placeholder outside a quoted string in a CommonJS `.js`/`.cjs`) stops the deploy instead of a warning —
+  it would also land in every backup.
+
+### Deployer
+
+- `bmfk project-config`: the description defaults to the project name. Left empty, the config failed the
+  deployer's own validation.
+- The project name rule lives in `ConfigRules`, with the other rules the config generator on the website
+  shares with the CLI (password length, logins, scrypt hash format, the project config it builds).
+
 ## 1.1.0 — 2026-11-24
 
 Security fixes reported by @sorokin-vladimir in #2–#5, reworked so existing PayAuth clients keep working.

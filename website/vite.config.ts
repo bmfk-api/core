@@ -15,21 +15,28 @@ const highlighter = await createHighlighter({
   engine: createJavaScriptRegexEngine(),
 });
 
+const mdxPlugin = mdx({
+  remarkPlugins: [remarkGfm, remarkSiteTokens],
+  rehypePlugins: [
+    rehypeSlug,
+    // Highlighted at build time: no highlighter ships to the browser.
+    [rehypeShikiFromHighlighter, highlighter, {
+      themes: { light: "github-light", dark: "github-dark-dimmed" },
+      defaultColor: false,
+    }],
+  ],
+});
+
 export default defineConfig({
   plugins: [
     {
       enforce: "pre",
-      ...mdx({
-        remarkPlugins: [remarkGfm, remarkSiteTokens],
-        rehypePlugins: [
-          rehypeSlug,
-          // Highlighted at build time: no highlighter ships to the browser.
-          [rehypeShikiFromHighlighter, highlighter, {
-            themes: { light: "github-light", dark: "github-dark-dimmed" },
-            defaultColor: false,
-          }],
-        ],
-      }),
+      ...mdxPlugin,
+      // The MDX plugin drops the query: "page.mdx?raw" (the search index) would be compiled too.
+      transform(code, id) {
+        if (/[?&]raw\b/.test(id)) return null;
+        return (mdxPlugin.transform as any).call(this, code, id);
+      },
     },
     react({ include: /\.(mdx|tsx?)$/ }),
   ],

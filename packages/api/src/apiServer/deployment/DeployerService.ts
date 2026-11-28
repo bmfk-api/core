@@ -11,6 +11,7 @@ import { UID } from "../helper/UID";
 import { ValidationModel, Validator } from "../helper/Validator";
 import { IDeploymentNotifier, Notifier } from "./Notifier";
 import { sendTelegram, telegramText } from "./TelegramNotifier";
+import { transportProblem } from "./resolveConfig";
 import { IError } from "../structures/Interfaces";
 import { execFileSync, execFile } from "child_process";
 import { promisify } from "util";
@@ -574,7 +575,7 @@ export class DeployerService extends BaseService{
 
             // setup config
             if(found.config){
-                let inject = secretsFile;
+                const inject = secretsFile;
                 if(secretsFile){
                     SecretsInjector.write(secretsFile, found.config);
                     const unreadable = SecretsInjector.verify(secretsFile, found.config);
@@ -583,19 +584,19 @@ export class DeployerService extends BaseService{
                         throw {code:66,message:"The secrets file can't be read back — the app was not started.",details:unreadable,httpStatus:500}
                     }
                     logInfo(`Secrets of "${found.name}" written to ${secretsFile}`);
-                    // ES modules have no require(): the whole project keeps value substitution.
+                    // ES modules have no require(): the secrets file can't be read from them.
+                    let esm = false;
                     try{
                         const pkg = JSON.parse(fs.readFileSync(path.resolve(found.destination,"package.json"),"utf-8"));
-                        if(pkg?.type === "module"){
-                            logWarn(`Secrets of "${found.name}": the project is an ES module ("type": "module") — values are substituted into the code as before`);
-                            inject = null;
-                        }
+                        esm = pkg?.type === "module";
                     }catch{ /* no package.json — CommonJS by default */ }
+                    if(esm){
+                        logError(`Deploy of "${found.name}" stopped: secrets are on, but the project is an ES module ("type": "module") — values would be written into the code`);
+                        throw {code:67,message:"Secrets file mode doesn't support ES modules — the app was not started.",details:"remove `secrets` from the project config to substitute values into the code knowingly",httpStatus:500}
+                    }
                 }
                 const onDisk: string[] = [];
                 await this.applyConfig(found.destination,found.config,{ secretsFile: inject, onDisk })
-                if(secretsFile && onDisk.length)
-                    logWarn(`Secrets of "${found.name}" are still written into ${onDisk.length} file(s) — only quoted placeholders in .js/.cjs can read the secrets file: ${onDisk.map(f=>path.relative(found!.destination,f)).join(", ")}`);
             }
 
             // Blue-green: tell each slot who it is and how to ask whether it's live. Written into
@@ -746,6 +747,8 @@ export class DeployerService extends BaseService{
         if(logins.length === 0) return { error: "review.reviewers is empty" };
         const url = String(this.setup?.review_url ?? "");
         if(!/^https?:\/\/[^\s#]+$/.test(url)) return { error: "review_url is not set in setup.json" };
+        const insecure = transportProblem(url);
+        if(insecure) return { error: "review_url: " + insecure };
         if(!this.notifier) return { error: "the notifier is not configured in setup.json — reviewers can't be emailed" };
         const known = new Map((this.setup?.reviewers ?? []).map(r => [r.login, r]));
         const reviewers: { login:string, email:string }[] = [];
@@ -867,27 +870,42 @@ export class DeployerService extends BaseService{
 
         pending.state = "deploying";
         this.reviews.save(pending);
-        // npm ci and migrations can take minutes — longer than an HTTP request should wait. The
-        // page polls the state instead.
-        this._deployApproved(project, accepted).catch(e => logError(`Approved deploy of "${project}" crashed: ${e?.message ?? e}`));
+        // Busy from now on: an upload in the gap before _deploy takes over would replace the approved
+        // archive. npm ci and migrations can take minutes — longer than an HTTP request should wait.
+        // The page polls the state instead.
+        this.busy.set(project, true);
+        this._deployApproved(project, accepted, sha256).catch(e => logError(`Approved deploy of "${project}" crashed: ${e?.message ?? e}`));
         return { pending };
     }
 
-    private async _deployApproved(project:string, approvers:string[]){
+    private async _deployApproved(project:string, approvers:string[], approvedSha256:string){
+        let handedOver = false;
+        try{
+            return await this._deployApprovedHeld(project, approvers, approvedSha256, () => { handedOver = true; this.busy.set(project, false); });
+        }finally{
+            if(!handedOver) this.busy.set(project, false);
+        }
+    }
+
+    // Runs while the project is held busy; `release` is called right before _deploy, which takes the
+    // busy flag in the same tick.
+    private async _deployApprovedHeld(project:string, approvers:string[], approvedSha256:string, release:() => void){
         const finish = (state:"deployed"|"failed", result:{ message:string, slot?:string|null, activeThisDeploy?:boolean }) => {
             const p = this.reviews.get(project);
-            if(!p) return;
+            if(!p || p.sha256 !== approvedSha256) return;
             p.state = state;
             p.result = { at: Date.now(), ...result };
             this.reviews.save(p);
             this.reviews.dropArchive(project);
-            this.reviews.journal(project, state, { sha256: p.sha256, approvedBy: approvers, message: result.message });
+            this.reviews.journal(project, state, { sha256: approvedSha256, approvedBy: approvers, message: result.message });
         };
         const pending = this.reviews.get(project);
         if(!pending) return;
         // Exactly what the reviewers saw, or nothing.
-        if(!(await this.reviews.archiveIntact(pending))){
-            logError(`Approved deploy of "${project}" stopped: the stored archive no longer matches its hash`);
+        if(pending.sha256 !== approvedSha256 || pending.state !== "deploying" || !(await this.reviews.archiveIntact(pending))){
+            logError(`Approved deploy of "${project}" stopped: the stored archive is not the one that was approved`);
+            if(pending.sha256 !== approvedSha256)
+                this.reviews.journal(project, "failed", { sha256: approvedSha256, approvedBy: approvers, message: "the pending upload is not the approved one" });
             return finish("failed", { message: "The stored archive changed after the review — nothing was deployed." });
         }
         const configurations = await REQ_DEPLOYMENT_CONFIG.request();
@@ -898,6 +916,7 @@ export class DeployerService extends BaseService{
         }
         const actor = { login: `${pending.uploadedBy} (approved by ${approvers.join(", ")})`, password: "" } as IDeployerUser;
         try{
+            release();
             const res:any = await this._deploy(found, actor, configurations, project, { archivePath: this.reviews.archivePath(project) });
             if(res?.error){
                 finish("failed", { message: res.error.message + (res.error.details ? ` (${res.error.details})` : "") });
@@ -1566,6 +1585,10 @@ export class DeployerService extends BaseService{
         for(const [key,value] of Object.entries(config)){
             const placeholder = `_{{${key}}}_`;
             if(content.includes(placeholder)){
+                // Secrets mode: a value written into the code would also land in every backup.
+                if(ctx?.secretsFile)
+                    throw {code:68,message:"A config value would be written into the code — the app was not started.",
+                        details:`${filePath}: _{{${key}}}_ is not a quoted placeholder in a CommonJS .js/.cjs file, so it can't read the secrets file`,httpStatus:500}
                 substituted = true;
                 content=content.replaceAll(placeholder,()=>String(value))
             }

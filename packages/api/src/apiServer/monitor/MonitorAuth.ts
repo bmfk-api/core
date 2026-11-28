@@ -12,6 +12,7 @@ import fs from "fs";
 import path from "path";
 import { IMonitorUser } from "../APIService";
 import { logWarn, logInfo, logError } from "../LogService";
+import { FailureCounter } from "../helper/FailureCounter";
 import { PasswordHash } from "../helper/PasswordHash";
 
 export interface IMonitorSession {
@@ -37,17 +38,14 @@ export class MonitorAuth {
         analytic: ["dashboard"],
     };
 
-    /** Unknown/absent role falls back to admin so existing configs keep working — the caller
-     *  warns about it, because least privilege wants the role spelled out. */
+    /** A user without a known role gets nothing: least privilege wants the role spelled out. */
     static roleAllows(role: string | undefined | null, capability: TMonitorCapability): boolean {
-        const caps = MonitorAuth.ROLE_CAPS[(role as TMonitorRole)] ?? MonitorAuth.ROLE_CAPS.admin;
-        return caps.includes(capability);
+        return (MonitorAuth.ROLE_CAPS[role as TMonitorRole] ?? []).includes(capability);
     }
 
     static describeRole(role: string | undefined | null): { role: string, capabilities: TMonitorCapability[] } {
-        const r = (role as TMonitorRole);
-        return { role: MonitorAuth.ROLE_CAPS[r] ? r : "admin",
-                 capabilities: MonitorAuth.ROLE_CAPS[r] ?? MonitorAuth.ROLE_CAPS.admin };
+        const caps = MonitorAuth.ROLE_CAPS[role as TMonitorRole];
+        return caps ? { role: role as string, capabilities: caps } : { role: "none", capabilities: [] };
     }
 
     // ---- persistent 2FA store ----
@@ -297,7 +295,7 @@ export class MonitorAuth {
     static LOCKOUT_MS = 30 * 60 * 1000;
 
     private static sessions = new Map<string, IMonitorSession>();
-    private static failures = new Map<string, { count: number; lockedUntil: number }>();
+    private static failures = new FailureCounter(MonitorAuth.MAX_FAILED_ATTEMPTS, MonitorAuth.LOCKOUT_MS);
     // Last TOTP counter accepted per login: a 6-digit code stays valid for the whole step, so
     // without this a shoulder-surfed code could simply be replayed.
     private static usedTotpCounter = new Map<string, number>();
@@ -421,23 +419,15 @@ export class MonitorAuth {
     // ---- lockout ----
 
     static lockoutRemainingMs(login: string): number {
-        const f = MonitorAuth.failures.get(login);
-        if (!f || f.lockedUntil <= Date.now()) return 0;
-        return f.lockedUntil - Date.now();
+        return MonitorAuth.failures.lockedFor(login);
     }
 
     private static registerFailure(login: string) {
-        const f = MonitorAuth.failures.get(login) ?? { count: 0, lockedUntil: 0 };
-        f.count++;
-        if (f.count >= MonitorAuth.MAX_FAILED_ATTEMPTS) {
-            f.lockedUntil = Date.now() + MonitorAuth.LOCKOUT_MS;
-            f.count = 0;
-        }
-        MonitorAuth.failures.set(login, f);
+        MonitorAuth.failures.fail(login);
     }
 
     private static clearFailures(login: string) {
-        MonitorAuth.failures.delete(login);
+        MonitorAuth.failures.clear(login);
     }
 
     // ---- credentials ----
