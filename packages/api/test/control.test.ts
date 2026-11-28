@@ -86,7 +86,11 @@ test("readiness checks: false, a reason, a throw and a hang are all not ready", 
 
 test("control socket path: in the project's data folder, per slot; too long → none", () => {
     assert.equal(controlSocketPath("shop", "blue"), path.join(process.env.BMFK_DATA_DIR!, "shop", "control-blue.sock"));
-    assert.equal(controlSocketPath("x".repeat(100), null), null);
+    // sun_path is ~100 bytes: a long data root gives no socket (the app runs without the channel).
+    const saved = process.env.BMFK_DATA_DIR;
+    process.env.BMFK_DATA_DIR = "/" + "d".repeat(90);
+    try { assert.equal(controlSocketPath("shop", "green"), null); }
+    finally { process.env.BMFK_DATA_DIR = saved; }
 });
 
 test("SIGTERM: a request in progress finishes, then the process exits 0", async () => {
