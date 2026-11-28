@@ -100,7 +100,7 @@ export interface APIServiceOptions<TInterceptor=unknown>{
 	
 	// Inline object, or a path to a JSON file of the same shape: the file is watched and
 	// re-read on change, so users can be added or removed without a restart or a redeploy.
-	// Default "": the data folder's access.json (/var/bmfk/<project>/access.json); while it doesn't
+	// Default "": the data folder's access.json (~/.bmfk/<project>/access.json); while it doesn't
 	// exist the monitor and the documentation are closed.
 	access:IAccess|string,
 
@@ -117,7 +117,7 @@ export interface APIServiceOptions<TInterceptor=unknown>{
 	fileLimit:number // b
 	// Where the monitor keeps metrics history (JSON/JSONL), so it survives restarts and deploys: the
 	// live week per minute, older weeks downsampled to hourly, newest 10 weeks kept. Default:
-	// /var/bmfk/<project>/metrics (see helper/AppDataPath) — shared by both blue-green slots, only the
+	// ~/.bmfk/<project>/metrics (see helper/AppDataPath) — shared by both blue-green slots, only the
 	// live one writes. false → in memory only.
 	metricsDir?:string|false
 	// Blue-green: how often (ms) the background watcher asks the deployer whether this slot is live.
@@ -329,7 +329,7 @@ export class APIService<TInterceptorResult=any,TInternalCallParams=any> extends 
 		return { error: { ...DefaultErrors.INTERNAL_SERVER_ERROR, ...(dev ? { details: String(e) } : {}) }, httpStatus: 500 };
 	}
 
-	/** Where access lives when `access` is "": /var/bmfk/<project>/access.json. */
+	/** Where access lives when `access` is "": ~/.bmfk/<project>/access.json. */
 	static defaultAccessFile(): string {
 		const dir = AppData.dir("");
 		return dir ? path.join(dir, "access.json") : appDataPath("access", ".json");
@@ -534,7 +534,7 @@ export class APIService<TInterceptorResult=any,TInternalCallParams=any> extends 
 		}
 
 		if(this.options.threatMonitoring !== false){
-			// /var/bmfk/<project>/threats.json; beside the code when /var/bmfk can't be created.
+			// <data folder>/<project>/threats.json; beside the code when it can't be created.
 			const dataDir = AppData.dir("");
 			ThreatMonitor.configure(dataDir ? path.join(dataDir, "threats.json") : appDataPath("threats", ".json"));
 			app.use((req,res,next)=>{

@@ -1694,7 +1694,7 @@ export class DeployerService extends BaseService{
     static MIGRATE_TIMEOUT_MS = 10 * 60 * 1000;
 
     // The deployer's project name is the app's name on the server: written into the deployed
-    // package.json (and its lock), it names the app's data folder /var/bmfk/<name>. One source tree
+    // package.json (and its lock), it names the app's data folder ~/.bmfk/<name>. One source tree
     // can be deployed as several projects — each copy gets its own name. Never fails a deploy.
     static _stampProjectName(dir:string, projectName:string){
         const problem = projectNameProblem(projectName);

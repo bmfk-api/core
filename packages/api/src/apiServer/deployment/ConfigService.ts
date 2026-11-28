@@ -146,7 +146,7 @@ const _TConfig={
 
     // Keep config values out of the deployed code: they go to a secrets file outside the deploy
     // folder ({dir} → <dir>/<project>[-<slot>].json, or {file}; {} uses secrets_dir from the
-    // deployer's setup.json, or /var/bmfk/<project>/secrets[-<slot>].json when that is unset), and
+    // deployer's setup.json, or <data folder>/<project>/secrets[-<slot>].json when that is unset), and
     // quoted "_{{KEY}}_" in .js files become a read of that file.
     secrets:{
         dir:"",
@@ -160,7 +160,7 @@ const _TConfig={
 
 export type IConfig = ValidationModel<typeof _TConfig>
 
-// The project name ends up in a package.json "name", in /var/bmfk/<name>, in state, backup and
+// The project name ends up in a package.json "name", in the data folder <root>/<name>, in state, backup and
 // secrets file names — so it must be valid as all of them: an npm package name that is also a plain
 // folder name. Lowercase letters, digits, ".", "_", "-"; starts with a letter or digit; up to 100.
 const PROJECT_NAME = /^[a-z0-9][a-z0-9._-]{0,99}$/;

@@ -30,6 +30,7 @@ import { DeployKeyWizard, MicroserviceKey } from "./DeployKeyWizard";
 import { MigrateProject } from "./MigrateProject";
 import { DeployerInit } from "./DeployerInit";
 import { Ps } from "./Ps";
+import { DataMove } from "./DataMove";
 
 function usage(): never {
     console.error("Usage:");
@@ -48,7 +49,8 @@ function usage(): never {
     console.error("  bmfk deploy-key [deploy.json]             — a signing key pair: private key into deploy.json, public key for setup.json");
     console.error("  bmfk ms-key                               — a signing key pair for a microservice host or caller");
     console.error("  bmfk migrate [folder] [--write]           — move a project from the legacy server 6.x (shows the plan; --write applies it)");
-    console.error("  bmfk deployer-init [folder]               — set up a deployer on this server: service, pm2, setup.json, nginx");
+    console.error("  bmfk deployer-init [folder]               — set up a deployer on this server: service (systemd or pm2), setup.json, nginx");
+    console.error("  bmfk data move [--yes]                    — move the data folders from /var/bmfk (1.0/1.1) to ~/.bmfk");
     console.error("  bmfk ps [list|log|show|start|stop|restart|startup|boot-check] — processes run by the deployer under systemd (bmfk ps help)");
     console.error("");
     console.error("Config path is optional (auto-discovers deploy/ folder → deploy.json when omitted).");
@@ -222,6 +224,12 @@ async function main() {
                 process.exit(1);
             }
             await ProjectToken(rest.includes("--hash") ? "hash" : "generate");
+            break;
+        }
+
+        case "data": {
+            if (rest[0] !== "move") { console.error("Usage: bmfk data move [--yes]"); process.exit(1); }
+            process.exitCode = await DataMove(rest.slice(1));
             break;
         }
 

@@ -602,6 +602,15 @@ async function bootReport(d: IPsDeps, units: IUnitInfo[], c: ReturnType<typeof p
         else { reachable = false; bad("systemd user manager not reachable", `log in as ${d.user} directly (ssh), not via su/sudo; with linger on it runs from boot`); }
     }
 
+    // The projects' sandbox (ProtectSystem, PrivateTmp … in a user unit) needs user namespaces.
+    const sysctl = (p: string) => (d.read(p) ?? "").trim();
+    if (sysctl("/proc/sys/user/max_user_namespaces") === "0" || sysctl("/proc/sys/kernel/unprivileged_userns_clone") === "0")
+        bad("user namespaces off — units with the sandbox (the default) won't start",
+            `sudo sysctl -w kernel.unprivileged_userns_clone=1 (and the same in /etc/sysctl.d/), or "systemd": { "sandbox": false } in the project config`);
+    else if (sysctl("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") === "1")
+        d.out(`  ${c.yellow("!")} AppArmor restricts user namespaces — if a unit fails at start with a "namespace" error, set "systemd": { "sandbox": false } for that project`);
+    else ok("user namespaces available — the projects' sandbox can work");
+
     const conf = d.read("/etc/systemd/journald.conf") ?? "";
     const volatile = /^\s*Storage\s*=\s*(volatile|none)\s*$/m.test(conf);
     if (!volatile && d.exists("/var/log/journal")) ok("journal kept on disk — logs survive a reboot");

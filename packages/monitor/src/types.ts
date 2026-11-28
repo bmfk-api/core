@@ -70,7 +70,7 @@ export type TWeekKey = string;
 
 // File logs on disk (Monitor.logfiles / logtail). The client only ever picks a
 // source id — the backend resolves the path, so arbitrary files can't be read.
-export type TLogSourceId = "process-out" | "process-err" | "nginx-access" | "nginx-error";
+export type TLogSourceId = "journal" | "process-out" | "process-err" | "nginx-access" | "nginx-error";
 
 export interface ILogFileSource {
 	id: TLogSourceId;
@@ -254,11 +254,22 @@ export interface IProcPm2 {
 	cwd?: string;
 }
 
+// What starts the process again (1.2.0+): the deployer's systemd unit or pm2.
+export interface IProcSupervisor {
+	kind: "systemd" | "pm2" | null;
+	managed: boolean;
+	name: string | null;
+	unit: string | null;
+	pmId: string | null;
+}
+
 // Response of POST sm/restart on success.
 export interface IRestartResponse {
 	restarting: boolean;
 	name: string;
-	pmId: string;
+	pmId: string | null;
+	supervisor?: "systemd" | "pm2" | null;
+	unit?: string | null;
 	by: string;
 	graceMs: number;
 }
@@ -282,6 +293,7 @@ export interface IProcInfo {
 		uptimeSec: number;
 		availableParallelism: number;
 		pm2?: IProcPm2;
+		supervisor?: IProcSupervisor;
 	};
 	memory: {
 		rss: number;

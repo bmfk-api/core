@@ -113,7 +113,7 @@ export async function ProjectConfigWizard(): Promise<void> {
 
     section("Secrets file — keeps config values out of the deployed code");
     if (Object.keys(config).length && await yes("Store config values in a secrets file outside the deploy folder?", true)) {
-        const where = await ask("  folder (empty = secrets_dir from the deployer's setup.json, else /var/bmfk/<project>)", "");
+        const where = await ask("  folder (empty = secrets_dir from the deployer's setup.json, else the project's data folder, ~/.bmfk/<project>)", "");
         if (where && (!path.isAbsolute(where) || path.resolve(where).startsWith(path.resolve(destination) + path.sep)))
             console.log(yellow("  ⚠ The folder must be absolute and outside the deploy folder — the deployer will refuse this project as is."));
         cfg.secrets = where ? { dir: where } : {};

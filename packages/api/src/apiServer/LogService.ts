@@ -58,6 +58,23 @@ export const logAPI = (message:any,...optional:any[])=>{
 }
 
 
+// syslog priority of each level, for the systemd journal.
+const JOURNAL_PRIORITY: Record<number, number> = {
+    [LOG_LEVEL.ALL]: 7, [LOG_LEVEL.API]: 6, [LOG_LEVEL.INFO]: 6, [LOG_LEVEL.DB]: 6,
+    [LOG_LEVEL.WARN]: 4, [LOG_LEVEL.ERROR]: 3, [LOG_LEVEL.CRIT]: 2,
+};
+
+/**
+ * One log item as a line for stdout: "2026-11-27 10:00:00 WARN text". When stdout goes to the systemd
+ * journal (systemd sets JOURNAL_STREAM), the line starts with the level for journald ("<4>"), so
+ * `journalctl -p warning` and `bmfk ps log --errors` find warnings and errors.
+ *   logOptions.output = item => console.log(logLine(item));
+ */
+export function logLine(item: ILogItem, env: NodeJS.ProcessEnv = process.env): string {
+    const prefix = env.JOURNAL_STREAM ? `<${JOURNAL_PRIORITY[item.level] ?? 6}>` : "";
+    return `${prefix}${item.date} ${LOG_LEVEL[item.level] ?? item.level} ${item.text}`;
+}
+
 export const S_LOG=new Signal<{level:LOG_LEVEL,data:any[],traceId?:string}>()
 export const S_LOG_CREATED=new Signal<ILogItem>()
 export const S_LOG_CHANGE_LEVEL=new Signal<LOG_LEVEL>();

@@ -42,7 +42,7 @@ export class BlockedIps {
 
     static get path(): string | null { return BlockedIps.file; }
 
-    // /var/bmfk/<project>/blocked-ips.json. A file already at the old place (beside the deployed
+    // <data folder>/<project>/blocked-ips.json. A file already at the old place (beside the deployed
     // code) keeps being used — moving it is the operator's call, so a block list is never lost.
     static defaultPath(): string {
         const dir = AppData.dir("");

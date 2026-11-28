@@ -19,7 +19,7 @@ interface IWizard {
 
 const WIZARDS: IWizard[] = [
     { command: "bmfk deployer-init [folder]", title: "New deployer on this server",
-      what: "Checks Node, pm2 and /var/bmfk, asks for port, folders, the first deploy users' public keys, allowed addresses and Telegram, then writes the service, its pm2 file and setup.json, and prints the nginx block and the next steps.",
+      what: "Checks Node, systemd or pm2 and the data folder, asks for port, folders, the first deploy users' public keys, allowed addresses and Telegram, then writes the service, its systemd unit (started at boot) or pm2 file and setup.json, and prints the nginx block and the next steps.",
       where: "on the server, in an empty folder with @bmfk/api installed",
       run: () => DeployerInit([]) },
     { command: "bmfk project-config", title: "New project config for the deployer",

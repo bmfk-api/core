@@ -252,6 +252,7 @@ export class ProcessMonitor {
                     ? os.availableParallelism()
                     : os.cpus().length,
                 pm2: this.getPm2Identity(),
+                supervisor: this.getSupervisor(),
             },
             memory: {
                 rss: mem.rss,
@@ -296,6 +297,21 @@ export class ProcessMonitor {
             io,
             limits: limitsParsed,
         };
+    }
+
+    // ---- supervisor ---------------------------------------------------------------------------
+    // What brings this process back when it exits: a systemd unit written by the deployer (its
+    // Restart=always), or pm2 (autorestart). `managed=false` means nothing would. `name` is the
+    // process name the deployer gave it ("<project>" or "<project>-<slot>") — the restart
+    // confirmation.
+    static getSupervisor(): { kind: "systemd" | "pm2" | null; managed: boolean; name: string | null; unit: string | null; pmId: string | null } {
+        const env = process.env;
+        const unit = env.BMFK_UNIT ?? null;
+        if (env.INVOCATION_ID && unit && /^bmfk-[a-z0-9][a-z0-9._-]*\.service$/.test(unit))
+            return { kind: "systemd", managed: true, name: unit.slice("bmfk-".length, -".service".length), unit, pmId: null };
+        const pm2 = this.getPm2Identity();
+        if (pm2.managed) return { kind: "pm2", managed: true, name: pm2.name, unit: null, pmId: pm2.pmId };
+        return { kind: null, managed: false, name: null, unit: null, pmId: null };
     }
 
     // ---- pm2 identity ------------------------------------------------------------------------

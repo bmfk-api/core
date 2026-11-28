@@ -1,20 +1,56 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { getBlueGreenActiveState, onLiveChange } from "../deployment/BlueGreenState";
 
 // Where a running app keeps what must survive restarts and deploys: never inside the deployed code
 // (a deploy cleans the destination).
 //
-// Default: /var/bmfk/<project>/… (BMFK_DATA_DIR overrides the root). One folder per project, so
-// several services on one server — on different ports, under different users — never share files,
-// while the two blue-green slots of one project (different ports too) do: history follows the live slot.
+// The root, in this order:
+//   1. BMFK_DATA_DIR, when set;
+//   2. /var/bmfk — the 1.0/1.1 default — while it holds a project folder this user can write to
+//      (a real folder, not a link left by `bmfk data move`), said once in the log;
+//   3. ~/.bmfk of the user the process runs as (/var/bmfk when that user has no home).
+// Inside: one folder per project (0700), so several services on one server — on different ports,
+// under different users — never share files, while the two blue-green slots of one project (different
+// ports too) do: history follows the live slot.
 //
 // The project is named by the deployer: its project name is written into .bluegreen.json and into
 // the deployed package.json "name" on every deploy (DeployerService._stampProjectName). Off the
 // deployer (a dev machine) package.json "name" is used as is, then the project folder's name.
 
 export const APP_DATA_ROOT_ENV = "BMFK_DATA_DIR";
-const DEFAULT_ROOT = "/var/bmfk";
+export const LEGACY_ROOT = "/var/bmfk";
+
+// The home folder root, or null when the user has none worth the name.
+export function homeRoot(): string | null {
+    let home: string;
+    try { home = os.homedir(); } catch { return null; }
+    return home && path.isAbsolute(home) && home !== "/" ? path.join(home, ".bmfk") : null;
+}
+
+// /var/bmfk still in use: it holds a real project folder this user can write to.
+export function legacyRootInUse(root = LEGACY_ROOT): boolean {
+    try {
+        fs.accessSync(root, fs.constants.W_OK);
+        for (const e of fs.readdirSync(root, { withFileTypes: true }))
+            if (e.isDirectory() && !e.isSymbolicLink()) {
+                try { fs.accessSync(path.join(root, e.name), fs.constants.W_OK); return true; } catch { }
+            }
+    } catch { }
+    return false;
+}
+
+let defaultRoot: string | null = null;
+function resolveDefaultRoot(): string {
+    if (defaultRoot) return defaultRoot;
+    const home = homeRoot();
+    if (legacyRootInUse() || !home) {
+        defaultRoot = LEGACY_ROOT;
+        if (home) console.warn(`bmfk: data folder ${LEGACY_ROOT} (the 1.0/1.1 default) — \`bmfk data move\` moves it to ${home}`);
+    } else defaultRoot = home;
+    return defaultRoot;
+}
 
 const fileSafe = (s: string) => s.replace(/^@[^/]+\//, "").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._]+/, "").slice(0, 64);
 
@@ -50,19 +86,19 @@ export const AppData = {
         return fileSafe(loc.project ?? "") || fileSafe(path.basename(loc.root)) || "app";
     },
 
-    /** /var/bmfk/<name> for a project named by someone else (the deployer, for the apps it deploys). */
+    /** <root>/<name> for a project named by someone else (the deployer, for the apps it deploys). */
     projectDir(name: string): string {
         return path.join(AppData.root(), fileSafe(name) || "app");
     },
 
     root(): string {
         const env = process.env[APP_DATA_ROOT_ENV];
-        return path.resolve(env && env.length > 0 ? env : DEFAULT_ROOT);
+        return path.resolve(env && env.length > 0 ? env : resolveDefaultRoot());
     },
 
     /**
-     * /var/bmfk/<project>/<sub>, created (0700) if missing. null when it can't be created — no rights
-     * on /var (a dev machine, an unprivileged user): the caller falls back and says so.
+     * <root>/<project>/<sub>, created (0700) if missing. null when it can't be created (no rights): the
+     * caller falls back and says so.
      */
     dir(sub: string): string | null {
         const dir = path.join(AppData.root(), AppData.project(), sub);
@@ -76,7 +112,7 @@ export const AppData = {
     },
 };
 
-// The pre-/var/bmfk location, beside the deployed code: <project>/<name><ext> for blue-green (shared
+// The location before data folders, beside the deployed code: <project>/<name><ext> for blue-green (shared
 // by both slots), <parent>/<name>.<folder><ext> otherwise.
 export function appDataPath(name: string, ext = ""): string {
     const loc = locate();

@@ -106,11 +106,12 @@ test("ps stop/start/restart: stop also disables (no start at boot), start enable
 });
 
 test("ps startup: names what's missing and prints the fix, never runs it", async () => {
-    const t = deps({ exists: (p) => !p.includes("linger"), read: (p) => p.endsWith("journald.conf") ? "[Journal]\nStorage=volatile\n" : fs.readFileSync(p, "utf-8") });
+    const t = deps({ exists: (p) => !p.includes("linger"), read: (p) => p.endsWith("journald.conf") ? "[Journal]\nStorage=volatile\n" : p === "/proc/sys/user/max_user_namespaces" ? "0\n" : null });
     assert.equal(await Ps(["startup"], t.d), 1);
     const text = t.out.join("\n");
     assert.match(text, /sudo loginctl enable-linger deploy/);
     assert.match(text, /Storage=persistent/);
+    assert.match(text, /unprivileged_userns_clone=1/);
     assert.ok(t.calls.every(c => c[0] === "is-system-running" || c[0] === "show"));
 });
 

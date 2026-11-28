@@ -42,6 +42,9 @@ export interface IUnitSpec {
     dataDir: string;            // the project's data folder (stays writable in the sandbox)
     control?: string | null;    // the app's control socket (BMFK_CONTROL_SOCKET), in dataDir
     settings: IUnitSettings;
+    // The deployer's own unit: no sandbox and no NoNewPrivileges — it writes the projects' folders and
+    // nginx files, and its switch hook may use sudo. Never set from a project config.
+    deployer?: boolean;
 }
 
 export interface IUnitInfo {
@@ -135,18 +138,23 @@ export function renderUnit(spec: IUnitSpec): { text?: string; problems?: string[
     const s = spec.settings ?? {};
     const nodeArgs = (s.node_args ?? []).filter(a => a !== "");
     if (spec.sourceMaps && !nodeArgs.includes("--enable-source-maps")) nodeArgs.unshift("--enable-source-maps");
-    const sandbox = s.sandbox !== false;
+    const sandbox = s.sandbox !== false && !spec.deployer;
     const unit = unitName(spec.name);
 
     const lines = [
-        "# Written by the bmfk deployer on every deploy — changes here are overwritten.",
-        "# Settings: the \"systemd\" block of the project config.",
+        ...(spec.deployer ? [
+            "# The bmfk deployer — written by `bmfk deployer-init`. Run it again to change it.",
+        ] : [
+            "# Written by the bmfk deployer on every deploy — changes here are overwritten.",
+            "# Settings: the \"systemd\" block of the project config.",
+        ]),
         "[Unit]",
         `Description=bmfk ${spec.name}`,
         `X-Bmfk-Id=${spec.id}`,
         `X-Bmfk-Project=${spec.project}`,
         ...(spec.slot ? [`X-Bmfk-Slot=${spec.slot}`] : []),
         ...(spec.port ? [`X-Bmfk-Port=${spec.port}`] : []),
+        ...(spec.deployer ? ["X-Bmfk-Role=deployer"] : []),
         ...(spec.control ? [`X-Bmfk-Control=${spec.control}`] : []),
         // Crash loop: more than 10 starts in 2 minutes → the unit stays failed (bmfk ps shows it).
         "StartLimitIntervalSec=120",
@@ -170,7 +178,7 @@ export function renderUnit(spec: IUnitSpec): { text?: string; problems?: string[
         ...(s.memory_max ? [`MemoryMax=${s.memory_max}`] : []),
         // Disk read/write per process for `bmfk ps show` (shown when the io controller is delegated).
         "IOAccounting=yes",
-        "NoNewPrivileges=yes",
+        ...(spec.deployer ? [] : ["NoNewPrivileges=yes"]),
         ...(sandbox ? [
             "PrivateTmp=yes",
             "ProtectSystem=strict",

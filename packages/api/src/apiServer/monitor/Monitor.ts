@@ -328,31 +328,33 @@ export class Monitor extends BaseEndpoint{
         }
 
 
-        const id = ProcessMonitor.getPm2Identity();
+        const id = ProcessMonitor.getSupervisor();
 
         // Safety 1 — never exit an unsupervised process: nothing would respawn it, that's an outage.
         if(!id.managed)
-            throw {...DefaultErrors.BAD_REQUEST,details:"Process is not managed by pm2 (no pm_id in env) — refusing to exit, nothing would restart it."}
+            throw {...DefaultErrors.BAD_REQUEST,details:"Nothing would start the process again (not a deployer's systemd unit, not under pm2) — refusing to exit."}
 
-        // Safety 2 — require explicit confirmation matching the real pm2 name, so a stray request
+        // Safety 2 — require explicit confirmation matching the real process name, so a stray request
         // (or a mis-click) can't kill production. Client must send { confirm: "<name>" }.
         if(req.data.confirm !== id.name)
             throw {...DefaultErrors.BAD_REQUEST,details:`Confirmation mismatch. To restart send { "confirm": "${id.name}" }.`}
 
+        const what = id.kind === "systemd" ? `systemd unit ${id.unit}` : `pm2 "${id.name}" (id ${id.pmId})`;
         // Let the app clean up gracefully, and record who did it (audit).
-        S_MONITOR_RESTART_REQUESTED.invoke({by:login,name:id.name,pmId:id.pmId})
-        S_MONITOR_REGISTRATE_ACTION.invoke({action:`restart requested by "${login}" for pm2 "${id.name}" (id ${id.pmId})`})
-        logInfo(`Restart requested via monitor by "${login}" for pm2 process "${id.name}" (id ${id.pmId})`,"Monitor")
+        S_MONITOR_RESTART_REQUESTED.invoke({by:login,name:id.name ?? "",pmId:id.pmId ?? ""})
+        S_MONITOR_REGISTRATE_ACTION.invoke({action:`restart requested by "${login}" for ${what}`})
+        logInfo(`Restart requested via monitor by "${login}" for ${what}`,"Monitor")
 
         // Safety 3 — respond FIRST, exit AFTER a grace window so the HTTP response reaches the
-        // client and listeners get a chance to flush. pm2 autorestart then respawns us.
+        // client and listeners get a chance to flush. systemd (Restart=always) or pm2 (autorestart)
+        // then starts it again. The exit goes through the graceful stop: requests in progress finish.
         const graceMs = 750;
         setTimeout(()=>{
-            logInfo(`Exiting now for pm2 restart (requested by "${login}")`,"Monitor")
-            process.exit(0)
+            logInfo(`Exiting now for a restart by ${id.kind} (requested by "${login}")`,"Monitor")
+            process.kill(process.pid, "SIGTERM")
         },graceMs)
 
-        return {data:{restarting:true,name:id.name,pmId:id.pmId,by:login,graceMs}}
+        return {data:{restarting:true,name:id.name,pmId:id.pmId,supervisor:id.kind,unit:id.unit,by:login,graceMs}}
     }
 
     async httpstats(req:IRequest):Promise<IResponse>{

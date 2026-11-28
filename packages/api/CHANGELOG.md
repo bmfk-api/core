@@ -1,9 +1,21 @@
 # Changelog
 
-## 1.2.0 — 2026-11-27
+## 1.2.0 — 2026-11-28
 
 ### Server
 
+- **Data folder: `~/.bmfk/<project>` by default** (was `/var/bmfk/<project>`), so nothing needs sudo and
+  each user's projects stay in that user's home (folders 0700). `/var/bmfk` is still used while it
+  holds a project folder this user can write to — said once at start — and `BMFK_DATA_DIR` still wins.
+  `bmfk data move [--yes]` moves the folders to `~/.bmfk` and leaves a link in place of each, so paths
+  already written into deployed code keep working; deploy each project once afterwards. A user without
+  a home folder keeps `/var/bmfk`.
+- `logLine(item)`: a log item as a stdout line. Under systemd (when stdout goes to the journal) it
+  starts with the level for journald, so `journalctl -p warning` and `bmfk ps log --errors` find
+  warnings and errors. The deployer made by `deployer-init` uses it.
+- Monitor: restart works for an app the deployer runs as a systemd unit, too (it was pm2 only); the
+  confirmation is the process name. The restart now goes through the graceful stop. A new log source
+  `journal` reads the unit's systemd journal.
 - Graceful stop. On SIGTERM or SIGINT (a deploy, `systemctl stop`, `pm2 restart`) the server stops taking
   connections, closes idle ones, and lets requests in progress finish for up to `shutdownTimeoutMs`
   (default 10 s); then the rest are cut and the services' `finishService` run, so a database pool is
@@ -54,6 +66,13 @@
 - Watchdog: processes under systemd are checked every 10 seconds. A crash that systemd restarted, a
   crash loop (systemd gave up) and a recovery go to Telegram and the project's emails. Restarts are
   reported at most once per process per 5 minutes, with the count. `bmfk ps stop` is not reported.
+- `bmfk deployer-init` on Linux runs the deployer as a systemd user unit by default (pm2 on request, or
+  where systemd's user manager isn't reachable): it writes `bmfk-<name>.service`, starts and enables it,
+  and runs `bmfk ps startup`. The deployer's own unit has no sandbox and no `NoNewPrivileges`, since it
+  writes the projects' folders and nginx files and its switch hook may use sudo. pm2 is no longer
+  needed with systemd.
+- `bmfk ps startup` also checks user namespaces, which the units' sandbox needs, and warns when
+  AppArmor restricts them.
 - pm2 stays: without `"runner"`, `"pm2": true` still means pm2 and `"pm2": false` starts nothing.
   `"runner": "none"` is the same as `"pm2": false`.
 
